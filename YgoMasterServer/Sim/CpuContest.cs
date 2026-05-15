@@ -17,10 +17,11 @@ namespace YgoMaster
     {
         public string DataDir { get; private set; }
         public string ContestDir { get; private set; }
+        // CpuContest/<duelType>/ -- holds Decks/, DeckStats/, DecksByRating/, Results.json.
+        public string DuelTypeDir { get; private set; }
         public string DeckStatsDir { get; private set; }
         List<DuelEngineInstance> engines = new List<DuelEngineInstance>();
         Dictionary<DeckInfo, DeckStats> decks = new Dictionary<DeckInfo, DeckStats>();
-        List<DeckInfo> decksRemaining = new List<DeckInfo>();
         Random rand = new Random();
         int numIterationsBeforeIdle;
         int numEnginesFinished;
@@ -29,14 +30,52 @@ namespace YgoMaster
         int numDuelsStarted;
         int numDuelsComplete;
         string duelType;
-        int matchmakingWarmupDuelsPerDeck;
-        int loggedMatchmakingMode; // 0=none, 1=warmup logged, 2=elo logged
+        MatchmakingStrategy matchmaking;
         bool saveReplays;
         int saveReplaysWinsPerDeck;
+
+        DeckStatsRegistry deckStatsRegistry;
 
         public CpuContest(string dataDir)
         {
             DataDir = dataDir;
+            deckStatsRegistry = new ContestDeckStatsRegistry(this);
+        }
+
+        // Bridges MatchmakingStrategy to CpuContest.decks without exposing the
+        // private DeckStats class to other files.
+        sealed class DeckStatsAdapter : DeckStatsView
+        {
+            readonly DeckStats inner;
+            public DeckStatsAdapter(DeckStats s) { inner = s; }
+            public DeckInfo Deck { get { return inner.Deck; } }
+            public double Rating { get { return inner.Rating; } }
+            public int NumDuels { get { return inner.GetNumDuels(); } }
+        }
+
+        sealed class ContestDeckStatsRegistry : DeckStatsRegistry
+        {
+            readonly CpuContest owner;
+            public ContestDeckStatsRegistry(CpuContest c) { owner = c; }
+            public int Count { get { return owner.decks.Count; } }
+            public IEnumerable<DeckStatsView> All
+            {
+                get
+                {
+                    foreach (DeckStats s in owner.decks.Values)
+                    {
+                        yield return new DeckStatsAdapter(s);
+                    }
+                }
+            }
+            public IEnumerable<DeckInfo> AllDecks
+            {
+                get { return owner.decks.Keys; }
+            }
+            public DeckStatsView Get(DeckInfo deck)
+            {
+                return new DeckStatsAdapter(owner.decks[deck]);
+            }
         }
 
         public void Run()
@@ -45,12 +84,6 @@ namespace YgoMaster
             if (!Directory.Exists(ContestDir))
             {
                 Console.WriteLine("Failed to find folder '" + ContestDir + "'");
-                return;
-            }
-            string decksDir = Path.Combine(ContestDir, "Decks");
-            if (!Directory.Exists(decksDir))
-            {
-                Console.WriteLine("Failed to find folder '" + decksDir + "'");
                 return;
             }
             string cardDataDir = Path.Combine(DataDir, "CardData");
@@ -77,8 +110,6 @@ namespace YgoMaster
                 Console.WriteLine("Failed to find file '" + contestSettingsFile + "'");
                 return;
             }
-            DeckStatsDir = Path.Combine(ContestDir, "DeckStats");
-            Utils.TryCreateDirectory(DeckStatsDir);
             Dictionary<string, object> settings = MiniJSON.Json.DeserializeStripped(File.ReadAllText(contestSettingsFile)) as Dictionary<string, object>;
             int numInstances = Utils.GetValue(settings, "instances", 1);
             numIterationsBeforeIdle = Utils.GetValue(settings, "iterationsBeforeIdle", 1);
@@ -97,7 +128,20 @@ namespace YgoMaster
                 Console.WriteLine("[CpuContest] WARN: invalid duelType '" + rawDuelType + "', falling back to Normal");
                 duelType = "Normal";
             }
-            matchmakingWarmupDuelsPerDeck = Utils.GetValue(settings, "matchmakingWarmupDuelsPerDeck", 10);
+            // Decks and outputs live under CpuContest/<duelType>/ so Normal and Rush
+            // pools don't mix and have separate rating histories.
+            DuelTypeDir = Path.Combine(ContestDir, duelType);
+            string decksDir = Path.Combine(DuelTypeDir, "Decks");
+            if (!Directory.Exists(decksDir))
+            {
+                Console.WriteLine("Failed to find folder '" + decksDir + "'");
+                return;
+            }
+            DeckStatsDir = Path.Combine(DuelTypeDir, "DeckStats");
+            Utils.TryCreateDirectory(DeckStatsDir);
+            string strategyName = Utils.GetValue<string>(settings, "matchmaking", RandomMatchmaking.StrategyName);
+            matchmaking = MatchmakingStrategy.Resolve(strategyName);
+            matchmaking.LoadConfig(settings);
             saveReplays = Utils.GetValue(settings, "saveReplays", false);
             saveReplaysWinsPerDeck = Utils.GetValue(settings, "saveReplaysWinsPerDeck", 3);
             foreach (string deckFile in Directory.GetFiles(decksDir))
@@ -129,12 +173,14 @@ namespace YgoMaster
                 numDuelsStarted += numDuels;
                 numDuelsComplete += numDuels;
             }
-            numDuelsTotal = ((decks.Count + (decks.Count % 2)) / 2) * numDuelsPerDeck;
+            matchmaking.Initialize(deckStatsRegistry, rand);
+            numDuelsTotal = matchmaking.ComputeTotalDuels(decks.Count, numDuelsPerDeck);
             UpdateProgressBar();
+            string mmSummary = matchmaking.ConfigSummary();
             Console.WriteLine("[CpuContest] Starting contest -- decks=" + decks.Count +
                 " instances=" + numInstances + " duelType=" + duelType +
                 " duelsPerDeck=" + numDuelsPerDeck + " total=" + numDuelsTotal +
-                " mmWarmup=" + matchmakingWarmupDuelsPerDeck +
+                " matchmaking=" + matchmaking.Name + (mmSummary.Length > 0 ? "(" + mmSummary + ")" : "") +
                 " saveReplays=" + saveReplays + (saveReplays ? " winsPerDeck=" + saveReplaysWinsPerDeck : ""));
             for (int i = 0; i < numInstances; i++)
             {
@@ -155,7 +201,7 @@ namespace YgoMaster
                         {
                             otherEngine.Stop();
                         }
-                        string decksByRatingDir = Path.Combine(ContestDir, "DecksByRating");
+                        string decksByRatingDir = Path.Combine(DuelTypeDir, "DecksByRating");
                         Utils.TryCreateDirectory(decksByRatingDir);
                         List<object> statsData = new List<object>();
                         foreach (DeckStats stats in decks.Values.OrderByDescending(x => x.Rating))
@@ -167,7 +213,7 @@ namespace YgoMaster
                             });
                             File.Copy(stats.Deck.File, Path.Combine(decksByRatingDir, ((int)stats.Rating) + " - " + Path.GetFileName(stats.Deck.File)), true);
                         }
-                        File.WriteAllText(Path.Combine(ContestDir, "Results.json"), MiniJSON.Json.Format(MiniJSON.Json.Serialize(statsData)));
+                        File.WriteAllText(Path.Combine(DuelTypeDir, "Results.json"), MiniJSON.Json.Format(MiniJSON.Json.Serialize(statsData)));
                         break;
                     }
                 }
@@ -197,94 +243,31 @@ namespace YgoMaster
             }
         }
 
-        DeckInfo GetNextDeck()
-        {
-            lock (engines)
-            {
-                if (decksRemaining.Count == 0)
-                {
-                    foreach (KeyValuePair<DeckInfo, DeckStats> deck in decks)
-                    {
-                        decksRemaining.Add(deck.Key);
-                    }
-                    Shuffle(decksRemaining);
-                }
-                int lastIndex = decksRemaining.Count - 1;
-                DeckInfo result = decksRemaining[lastIndex];
-                decksRemaining.RemoveAt(lastIndex);
-                return result;
-            }
-        }
-
         DeckStats GetNextDeck(out DeckStats opponent, out bool goFirst)
         {
             lock (engines)
             {
                 opponent = null;
                 goFirst = false;
-                if (numDuelsStarted == numDuelsTotal)
+                if (numDuelsStarted >= numDuelsTotal)
                 {
                     return null;
                 }
-                DeckInfo deck = GetNextDeck();
-                DeckStats result = decks[deck];
 
-                // Elo-based matchmaking: once every deck has hit the warmup quota, pick the
-                // opponent by closest rating (top-3 candidates in decksRemaining, random one).
-                // Otherwise (still in warmup), keep the original behavior (random shuffle).
-                bool warmupComplete = true;
-                foreach (DeckStats s in decks.Values)
+                string logLine;
+                DeckInfo primaryDeck, opponentDeck;
+                if (!matchmaking.TryPickNextPair(deckStatsRegistry, rand,
+                        out primaryDeck, out opponentDeck, out logLine))
                 {
-                    if (s.GetNumDuels() < matchmakingWarmupDuelsPerDeck)
-                    {
-                        warmupComplete = false;
-                        break;
-                    }
+                    return null;
+                }
+                if (!string.IsNullOrEmpty(logLine))
+                {
+                    Console.WriteLine(logLine);
                 }
 
-                if (warmupComplete && decksRemaining.Count > 0)
-                {
-                    // candidates = decksRemaining sorted by |rating - result.Rating| ascending
-                    double myRating = result.Rating;
-                    List<DeckInfo> candidates = new List<DeckInfo>(decksRemaining);
-                    candidates.Sort((a, b) =>
-                    {
-                        double da = Math.Abs(decks[a].Rating - myRating);
-                        double db = Math.Abs(decks[b].Rating - myRating);
-                        return da.CompareTo(db);
-                    });
-                    int topK = Math.Min(3, candidates.Count);
-                    DeckInfo chosen = candidates[rand.Next(topK)];
-                    decksRemaining.Remove(chosen);
-                    opponent = decks[chosen];
-
-                    if (System.Threading.Interlocked.CompareExchange(ref loggedMatchmakingMode, 2, 1) == 1
-                        || System.Threading.Interlocked.CompareExchange(ref loggedMatchmakingMode, 2, 0) == 0)
-                    {
-                        double dChosen = Math.Abs(decks[chosen].Rating - myRating);
-                        Console.WriteLine("[CpuContest] Matchmaking: Elo (delta=" + (int)dChosen +
-                            ", " + result.Deck.Name + " r" + (int)myRating +
-                            " vs " + opponent.Deck.Name + " r" + (int)opponent.Rating + ")");
-                    }
-                }
-                else
-                {
-                    // Random (warmup)
-                    opponent = decks[GetNextDeck()];
-
-                    if (System.Threading.Interlocked.CompareExchange(ref loggedMatchmakingMode, 1, 0) == 0)
-                    {
-                        int minDuels = int.MaxValue;
-                        foreach (DeckStats s in decks.Values)
-                        {
-                            int n = s.GetNumDuels();
-                            if (n < minDuels) minDuels = n;
-                        }
-                        Console.WriteLine("[CpuContest] Matchmaking: random (warmup, min " +
-                            minDuels + "/" + matchmakingWarmupDuelsPerDeck + " duels/deck)");
-                    }
-                }
-
+                DeckStats result = decks[primaryDeck];
+                opponent = decks[opponentDeck];
                 goFirst = result.GetNumGoFirstDuels() <= opponent.GetNumGoSecondDuels();
                 numDuelsStarted++;
                 return result;

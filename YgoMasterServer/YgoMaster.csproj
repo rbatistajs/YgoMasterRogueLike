@@ -102,6 +102,7 @@
     <Compile Include="Net\NetServer.cs" />
     <Compile Include="Pvp.cs" />
     <Compile Include="Sim\CpuContest.cs" />
+    <Compile Include="Sim\MatchmakingStrategy.cs" />
     <Compile Include="Updater.cs" />
     <Compile Include="WikiDump\HtmlAgilityPack.Merged.cs" />
     <Compile Include="Sim\DuelSimulator.DllContent.cs" />
