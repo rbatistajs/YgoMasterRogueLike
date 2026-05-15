@@ -60,10 +60,14 @@ namespace YgoMaster
             return (uint)(val | (int)param);
         }
 
-        public int RunCpuVsCpu(string deckFile1, string deckFile2, uint seed, bool goFirst, int iterationsBeforeIdle, Process parentProcess = null)
+        public int RunCpuVsCpu(string deckFile1, string deckFile2, uint seed, bool goFirst, int iterationsBeforeIdle, Process parentProcess = null, string duelType = "Normal")
         {
             Stopwatch sw = new Stopwatch();
             sw.Start();
+            Console.WriteLine("[Sim] DuelType=" + duelType +
+                " deck1=" + Path.GetFileName(deckFile1) +
+                " deck2=" + Path.GetFileName(deckFile2) +
+                " seed=" + seed + " goFirst=" + goFirst);
             DeckInfo deck1 = new DeckInfo();
             deck1.File = deckFile1;
             deck1.Load();
@@ -88,7 +92,14 @@ namespace YgoMaster
             DLL_DuelSetCpuParam(1, GetCpuParam(100));
             DLL_DuelSetFirstPlayer(goFirst ? 0 : 1);
             DLL_DuelSetDuelLimitedType((uint)DuelLimitedType.None);
-            DLL_DuelSysInitCustom((int)DllDuelType.Normal, false, 8000, 8000, 5, 5, false);
+            if (duelType.Equals("Rush", StringComparison.OrdinalIgnoreCase))
+            {
+                DLL_DuelSysInitRush();
+            }
+            else
+            {
+                DLL_DuelSysInitCustom((int)DllDuelType.Normal, false, 8000, 8000, 5, 5, false);
+            }
             Stopwatch turnTimer = new Stopwatch();
             turnTimer.Start();
             uint lastTurn = 0;
@@ -117,10 +128,15 @@ namespace YgoMaster
                 {
                     lastTurn = turn;
                     turnTimer.Restart();
+                    Console.WriteLine("[Sim] Turn=" + turn +
+                        " player=" + DLL_DuelWhichTurnNow() +
+                        " lp0=" + DLL_DuelGetLP(0) +
+                        " lp1=" + DLL_DuelGetLP(1));
                 }
                 if (turnTimer.Elapsed > TimeSpan.FromMinutes(3))
                 {
                     // No turn change in 3 minutes is probably enough...
+                    Console.WriteLine("[Sim] STUCK turn=" + DLL_DuelGetTurnNum() + " -- forcing Draw");
                     return (int)DuelResultType.Draw;
                 }
                 System.Threading.Thread.Sleep(1);
@@ -140,7 +156,11 @@ namespace YgoMaster
                 }
                 System.Threading.Thread.Sleep(10);
             }*/
-            return DLL_DuelGetDuelResult();
+            int finalResult = DLL_DuelGetDuelResult();
+            Console.WriteLine("[Sim] DuelEnded result=" + (DuelResultType)finalResult +
+                " turns=" + DLL_DuelGetTurnNum() +
+                " duration=" + sw.Elapsed.TotalSeconds.ToString("F1") + "s");
+            return finalResult;
         }
 
         public void Init()

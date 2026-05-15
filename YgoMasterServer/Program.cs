@@ -71,6 +71,16 @@ namespace YgoMaster
                         {
                             parentProcess = Process.GetProcessById(pid);
                         }
+                        // 8th positional arg (i+7): duelType -- "Normal" | "Rush", default "Normal"
+                        string duelType = "Normal";
+                        if (i < args.Length - 7)
+                        {
+                            string dt = args[i + 7];
+                            if (string.Equals(dt, "Rush", StringComparison.OrdinalIgnoreCase))
+                                duelType = "Rush";
+                            else if (string.Equals(dt, "Normal", StringComparison.OrdinalIgnoreCase))
+                                duelType = "Normal";
+                        }
                         string dataDir = Utils.GetDataDirectory(true);
                         YdkHelper.LoadIdMap(dataDir);
                         DuelSimulator sim = new DuelSimulator(dataDir);
@@ -78,7 +88,7 @@ namespace YgoMaster
                         {
                             return -1;
                         }
-                        return sim.RunCpuVsCpu(deckFile1, deckFile2, seed, goFirst, iterationsBeforeIdle, parentProcess);
+                        return sim.RunCpuVsCpu(deckFile1, deckFile2, seed, goFirst, iterationsBeforeIdle, parentProcess, duelType);
                     }
                     catch
                     {

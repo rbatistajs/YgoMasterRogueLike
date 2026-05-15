@@ -28,6 +28,7 @@ namespace YgoMaster
         int numDuelsTotal;
         int numDuelsStarted;
         int numDuelsComplete;
+        string duelType;
 
         public CpuContest(string dataDir)
         {
@@ -78,6 +79,20 @@ namespace YgoMaster
             int numInstances = Utils.GetValue(settings, "instances", 1);
             numIterationsBeforeIdle = Utils.GetValue(settings, "iterationsBeforeIdle", 1);
             numDuelsPerDeck = Utils.GetValue(settings, "duelsPerDeck", 1);
+            string rawDuelType = Utils.GetValue(settings, "duelType", "Normal");
+            if (string.Equals(rawDuelType, "Rush", StringComparison.OrdinalIgnoreCase))
+            {
+                duelType = "Rush";
+            }
+            else if (string.Equals(rawDuelType, "Normal", StringComparison.OrdinalIgnoreCase))
+            {
+                duelType = "Normal";
+            }
+            else
+            {
+                Console.WriteLine("[CpuContest] WARN: duelType invalido '" + rawDuelType + "', usando Normal");
+                duelType = "Normal";
+            }
             foreach (string deckFile in Directory.GetFiles(decksDir))
             {
                 try
@@ -109,6 +124,9 @@ namespace YgoMaster
             }
             numDuelsTotal = ((decks.Count + (decks.Count % 2)) / 2) * numDuelsPerDeck;
             UpdateProgressBar();
+            Console.WriteLine("[CpuContest] Iniciando contest -- decks=" + decks.Count +
+                " instances=" + numInstances + " duelType=" + duelType +
+                " duelsPerDeck=" + numDuelsPerDeck + " total=" + numDuelsTotal);
             for (int i = 0; i < numInstances; i++)
             {
                 engines.Add(new DuelEngineInstance(i + 1, this));
@@ -215,10 +233,12 @@ namespace YgoMaster
 
         void OnDuelResult(DeckStats stats, DeckStats opponentStats, bool goFirst, DuelResultType result, TimeSpan duration)
         {
-            //Debug.WriteLine("Duration:" + duration + " result:" + result + " deck1:" + stats.Deck.Name + " deck2:" + opponentStats.Deck.Name);
             lock (engines)
             {
                 numDuelsComplete++;
+                Console.WriteLine("[Duel " + numDuelsComplete + "/" + numDuelsTotal + "] " +
+                    stats.Deck.Name + " vs " + opponentStats.Deck.Name +
+                    " -> " + result + " (" + duration.TotalSeconds.ToString("F1") + "s)");
                 UpdateProgressBar();
 
                 double rating = stats.Rating;
@@ -458,11 +478,26 @@ namespace YgoMaster
                                     Stopwatch stopwatch = new Stopwatch();
                                     stopwatch.Start();
                                     process.StartInfo.Arguments = "--cpucontest-sim \"" + stats.Deck.File + "\" \"" + opponentStats.Deck.File + "\" " +
-                                        Contest.GetNextSeed() + " " + goFirst + " " + Contest.numIterationsBeforeIdle + " " + currentProcess.Id;
+                                        Contest.GetNextSeed() + " " + goFirst + " " + Contest.numIterationsBeforeIdle + " " + currentProcess.Id +
+                                        " " + Contest.duelType;
                                     process.StartInfo.FileName = "YgoMaster.exe";
                                     process.StartInfo.CreateNoWindow = true;
                                     process.StartInfo.UseShellExecute = false;
+                                    // Redirecionar stdout/stderr do filho pra logar no console do pai com prefixo da engine
+                                    process.StartInfo.RedirectStandardOutput = true;
+                                    process.StartInfo.RedirectStandardError = true;
+                                    int engineId = Id;
+                                    process.OutputDataReceived += (s, e) =>
+                                    {
+                                        if (e.Data != null) Console.WriteLine("[Engine " + engineId + "] " + e.Data);
+                                    };
+                                    process.ErrorDataReceived += (s, e) =>
+                                    {
+                                        if (e.Data != null) Console.WriteLine("[Engine " + engineId + " ERR] " + e.Data);
+                                    };
                                     process.Start();
+                                    process.BeginOutputReadLine();
+                                    process.BeginErrorReadLine();
                                     process.WaitForExit();
                                     if (process.ExitCode <= 0)
                                     {
