@@ -1235,6 +1235,11 @@ namespace YgoMaster
             duelSettings.SetRequiredDefaults();
             //duelSettings.BgmsFromValue(table.Bgm);// table.Bgm is a random BGM used to be shared between both players
             duelSettings.SetBgm(request.Player.DuelBgmMode);
+            // PvP DuelType configuravel via Settings.json "PvpDuelType". Default "Normal".
+            if (string.Equals(PvpDuelType, "Rush", StringComparison.OrdinalIgnoreCase))
+            {
+                duelSettings.Type = (int)DuelType.Rush;
+            }
             request.Player.ActiveDuelSettings.CopyFrom(duelSettings);
             request.Player.ActiveDuelSettings.PvpChoice = table.CoinFlipPlayerIndex;
             request.Player.ActiveDuelSettings.HasSavedReplay = false;

@@ -279,6 +279,12 @@ namespace YgoMaster
         /// </summary>
         public int MultiplayerPvpClientDuelDllSize;
         /// <summary>
+        /// DuelType pra PvP -- "Normal" (default) ou "Rush". Lido em Settings.json
+        /// e aplicado em duelSettings.Type quando uma sala PvP inicia (Act_Room.cs).
+        /// O Pvp.cs:898 traduz pra DllDuelType e passa pra DLL_DuelSysInitCustom.
+        /// </summary>
+        public string PvpDuelType;
+        /// <summary>
         /// Doesn't update the deck edit time when the deck is edited (this will preserve the deck order of the deck list)
         /// </summary>
         public bool DontUpdateDeckEditTime;
@@ -455,6 +461,16 @@ namespace YgoMaster
             MultiplayerPvpClientDoCommandUserOffset = Utils.GetValue<int>(values, "MultiplayerPvpClientDoCommandUserOffset");
             MultiplayerPvpClientRunDialogUserOffset = Utils.GetValue<int>(values, "MultiplayerPvpClientRunDialogUserOffset");
             MultiplayerPvpClientDuelDllSize = Utils.GetValue<int>(values, "MultiplayerPvpClientDuelDllSize");
+            PvpDuelType = Utils.GetValue<string>(values, "PvpDuelType", "Normal");
+            // Sanitize: aceita case-insensitive "Normal" ou "Rush", caso contrario default
+            if (!string.Equals(PvpDuelType, "Rush", StringComparison.OrdinalIgnoreCase))
+            {
+                PvpDuelType = "Normal";
+            }
+            else
+            {
+                PvpDuelType = "Rush";
+            }
             if (MultiplayerPvpClientDuelDllSize != 0 && MultiplayerEnabled)
             {
                 FileInfo duelDllFile = new FileInfo(Path.Combine("..", "masterduel_Data", "Plugins", "x86_64", "duel.dll"));

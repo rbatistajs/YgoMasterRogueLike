@@ -895,7 +895,18 @@ namespace YgoMaster
                 DLL_DuelSetFirstPlayer(duelSettings.FirstPlayer);
                 DLL_DuelSetDuelLimitedType((uint)DuelLimitedType.None);
                 DLL_SetAddRecordDelegate(addRecord);
-                DLL_DuelSysInitCustom((int)DuelType.Normal, tag, duelSettings.life[0], duelSettings.life[1], duelSettings.hnum[0], duelSettings.hnum[1], duelSettings.noshuffle);
+                // Traduz server DuelType (Normal=0, Extra=1, Tag=2, Speed=3, Rush=4)
+                // pra DLL fDuelType (Normal=0, Speed=1, Rush=2). Outros tipos viram Normal.
+                int fDuelType = 0;
+                switch ((DuelType)duelSettings.Type)
+                {
+                    case DuelType.Speed: fDuelType = 1; break;
+                    case DuelType.Rush:  fDuelType = 2; break;
+                }
+                Console.WriteLine("[Pvp] DuelType server=" + (DuelType)duelSettings.Type +
+                    " dll=" + fDuelType + " life=" + duelSettings.life[0] +
+                    " hand=" + duelSettings.hnum[0]);
+                DLL_DuelSysInitCustom(fDuelType, tag, duelSettings.life[0], duelSettings.life[1], duelSettings.hnum[0], duelSettings.hnum[1], duelSettings.noshuffle);
 
                 uint cardRareBufferSize = DLL_CardRareGetBufferSize();
                 IntPtr cardRarePtr = Marshal.AllocHGlobal((int)cardRareBufferSize);

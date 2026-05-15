@@ -109,7 +109,7 @@ namespace YgoMaster
             DLL_SetAddRecordDelegate(replayCb);
             if (duelType.Equals("Rush", StringComparison.OrdinalIgnoreCase))
             {
-                DLL_DuelSysInitRush();
+                DLL_DuelSysInitCustom((int)DllDuelType.Rush, false, 8000, 8000, 4, 4, false);
             }
             else
             {
