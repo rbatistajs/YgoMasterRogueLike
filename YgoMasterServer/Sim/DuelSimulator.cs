@@ -128,10 +128,6 @@ namespace YgoMaster
                 {
                     lastTurn = turn;
                     turnTimer.Restart();
-                    Console.WriteLine("[Sim] Turn=" + turn +
-                        " player=" + DLL_DuelWhichTurnNow() +
-                        " lp0=" + DLL_DuelGetLP(0) +
-                        " lp1=" + DLL_DuelGetLP(1));
                 }
                 if (turnTimer.Elapsed > TimeSpan.FromMinutes(3))
                 {
