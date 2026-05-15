@@ -81,6 +81,14 @@ namespace YgoMaster
                             else if (string.Equals(dt, "Normal", StringComparison.OrdinalIgnoreCase))
                                 duelType = "Normal";
                         }
+                        // 9th positional arg (i+8): saveReplayDir (optional, empty string = off)
+                        string saveReplayDir = null;
+                        if (i < args.Length - 8)
+                        {
+                            string srd = args[i + 8];
+                            if (!string.IsNullOrEmpty(srd))
+                                saveReplayDir = srd;
+                        }
                         string dataDir = Utils.GetDataDirectory(true);
                         YdkHelper.LoadIdMap(dataDir);
                         DuelSimulator sim = new DuelSimulator(dataDir);
@@ -88,7 +96,7 @@ namespace YgoMaster
                         {
                             return -1;
                         }
-                        return sim.RunCpuVsCpu(deckFile1, deckFile2, seed, goFirst, iterationsBeforeIdle, parentProcess, duelType);
+                        return sim.RunCpuVsCpu(deckFile1, deckFile2, seed, goFirst, iterationsBeforeIdle, parentProcess, duelType, saveReplayDir);
                     }
                     catch
                     {

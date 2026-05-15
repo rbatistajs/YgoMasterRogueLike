@@ -60,10 +60,11 @@ namespace YgoMaster
             return (uint)(val | (int)param);
         }
 
-        public int RunCpuVsCpu(string deckFile1, string deckFile2, uint seed, bool goFirst, int iterationsBeforeIdle, Process parentProcess = null, string duelType = "Normal")
+        public int RunCpuVsCpu(string deckFile1, string deckFile2, uint seed, bool goFirst, int iterationsBeforeIdle, Process parentProcess = null, string duelType = "Normal", string saveReplayDir = null)
         {
             Stopwatch sw = new Stopwatch();
             sw.Start();
+            long duelBeginEpoch = Utils.GetEpochTime();
             Console.WriteLine("[Sim] DuelType=" + duelType +
                 " deck1=" + Path.GetFileName(deckFile1) +
                 " deck2=" + Path.GetFileName(deckFile2) +
@@ -75,6 +76,19 @@ namespace YgoMaster
             DeckInfo deck2 = new DeckInfo();
             deck2.File = deckFile2;
             deck2.Load();
+
+            // Replay capture: AddRecord callback acumula bytes no MemoryStream.
+            // duel.dll invoca o callback a cada acao do duelo (mesmo mecanismo do --pvp).
+            MemoryStream replayRec = new MemoryStream();
+            AddRecord replayCb = (ptr, size) =>
+            {
+                byte[] tmp = new byte[size];
+                Marshal.Copy(ptr, tmp, 0, size);
+                lock (replayRec)
+                {
+                    replayRec.Write(tmp, 0, size);
+                }
+            };
 
             int num = DLL_SetWorkMemory(IntPtr.Zero);
             IntPtr engineWork = Marshal.AllocHGlobal(num);
@@ -92,6 +106,7 @@ namespace YgoMaster
             DLL_DuelSetCpuParam(1, GetCpuParam(100));
             DLL_DuelSetFirstPlayer(goFirst ? 0 : 1);
             DLL_DuelSetDuelLimitedType((uint)DuelLimitedType.None);
+            DLL_SetAddRecordDelegate(replayCb);
             if (duelType.Equals("Rush", StringComparison.OrdinalIgnoreCase))
             {
                 DLL_DuelSysInitRush();
@@ -153,10 +168,89 @@ namespace YgoMaster
                 System.Threading.Thread.Sleep(10);
             }*/
             int finalResult = DLL_DuelGetDuelResult();
+            int finalFinish = DLL_DuelGetDuelFinish();
+            byte[] replayBytes;
+            lock (replayRec)
+            {
+                replayBytes = replayRec.ToArray();
+            }
             Console.WriteLine("[Sim] DuelEnded result=" + (DuelResultType)finalResult +
                 " turns=" + DLL_DuelGetTurnNum() +
-                " duration=" + sw.Elapsed.TotalSeconds.ToString("F1") + "s");
+                " duration=" + sw.Elapsed.TotalSeconds.ToString("F1") + "s" +
+                " replayBytes=" + replayBytes.Length);
+
+            // Salvar replay so quando ha vencedor (nao Draw) e foi pedido path.
+            DuelResultType resultType = (DuelResultType)finalResult;
+            if (!string.IsNullOrEmpty(saveReplayDir) && (resultType == DuelResultType.Win || resultType == DuelResultType.Lose) && replayBytes.Length > 0)
+            {
+                try
+                {
+                    SaveReplayFile(saveReplayDir, deck1, deck2, seed, goFirst, resultType, finalFinish, duelBeginEpoch, replayBytes, duelType);
+                }
+                catch (Exception ex)
+                {
+                    Console.WriteLine("[Sim] ReplaySave FAILED: " + ex.Message);
+                }
+            }
             return finalResult;
+        }
+
+        static string SanitizeName(string name)
+        {
+            if (string.IsNullOrEmpty(name)) return "deck";
+            StringBuilder sb = new StringBuilder();
+            foreach (char c in name)
+            {
+                if (char.IsLetterOrDigit(c) || c == '.' || c == '_' || c == '-')
+                    sb.Append(c);
+                else
+                    sb.Append('_');
+            }
+            string s = sb.ToString();
+            if (s.Length > 40) s = s.Substring(0, 40);
+            return s;
+        }
+
+        void SaveReplayFile(string saveReplayDir, DeckInfo deck1, DeckInfo deck2, uint seed, bool goFirst,
+            DuelResultType resultType, int finalFinish, long duelBeginEpoch, byte[] replayBytes, string duelType)
+        {
+            Directory.CreateDirectory(saveReplayDir);
+            DeckInfo winner = resultType == DuelResultType.Win ? deck1 : deck2;
+            DeckInfo loser = resultType == DuelResultType.Win ? deck2 : deck1;
+            string winnerName = !string.IsNullOrEmpty(winner.Name) ? winner.Name : Path.GetFileNameWithoutExtension(winner.File);
+            string loserName = !string.IsNullOrEmpty(loser.Name) ? loser.Name : Path.GetFileNameWithoutExtension(loser.File);
+
+            // Empacotamento: base64(MessagePack({b: zlib(replayBytes), f: [finish, finish]}))
+            // Mesmo formato que DuelStarter.GetReplayDataString produz client-side
+            byte[] zlibBytes = Utils.ZLibCompress(replayBytes);
+            Dictionary<string, object> packDict = new Dictionary<string, object>();
+            packDict["b"] = zlibBytes;
+            packDict["f"] = new int[] { finalFinish, finalFinish };
+            byte[] msgpackBytes = MessagePack.Pack(packDict);
+            string replaym = Convert.ToBase64String(msgpackBytes);
+
+            // Montar DuelSettings minimal pra UI Replay listar
+            DuelSettings ds = new DuelSettings();
+            ds.DuelBeginTime = duelBeginEpoch;
+            ds.DuelEndTime = Utils.GetEpochTime();
+            ds.RandSeed = seed;
+            ds.FirstPlayer = goFirst ? 0 : 1;
+            ds.res = (int)resultType;
+            ds.finish = (int)finalFinish;
+            ds.turn = (int)DLL_DuelGetTurnNum();
+            ds.replaym = replaym;
+            ds.Deck[0].CopyFrom(deck1);
+            ds.Deck[1].CopyFrom(deck2);
+            ds.name[0] = !string.IsNullOrEmpty(deck1.Name) ? deck1.Name : Path.GetFileNameWithoutExtension(deck1.File);
+            ds.name[1] = !string.IsNullOrEmpty(deck2.Name) ? deck2.Name : Path.GetFileNameWithoutExtension(deck2.File);
+            ds.chapter = 0;
+            ds.GameMode = (int)GameMode.Audience; // mais permissivo p/ UI listar
+
+            string filename = "cpucontest_" + seed + "_" + SanitizeName(winnerName) + "_W_vs_" + SanitizeName(loserName) + ".json";
+            string filepath = Path.Combine(saveReplayDir, filename);
+            File.WriteAllText(filepath, MiniJSON.Json.Serialize(ds.ToDictionary()));
+            FileInfo fi = new FileInfo(filepath);
+            Console.WriteLine("[Sim] ReplaySaved " + filename + " (" + (fi.Length / 1024) + "KB)");
         }
 
         public void Init()

@@ -31,6 +31,8 @@ namespace YgoMaster
         string duelType;
         int matchmakingWarmupDuelsPerDeck;
         int loggedMatchmakingMode; // 0=none, 1=warmup logged, 2=elo logged
+        bool saveReplays;
+        int saveReplaysWinsPerDeck;
 
         public CpuContest(string dataDir)
         {
@@ -96,6 +98,8 @@ namespace YgoMaster
                 duelType = "Normal";
             }
             matchmakingWarmupDuelsPerDeck = Utils.GetValue(settings, "matchmakingWarmupDuelsPerDeck", 10);
+            saveReplays = Utils.GetValue(settings, "saveReplays", false);
+            saveReplaysWinsPerDeck = Utils.GetValue(settings, "saveReplaysWinsPerDeck", 3);
             foreach (string deckFile in Directory.GetFiles(decksDir))
             {
                 try
@@ -130,7 +134,8 @@ namespace YgoMaster
             Console.WriteLine("[CpuContest] Iniciando contest -- decks=" + decks.Count +
                 " instances=" + numInstances + " duelType=" + duelType +
                 " duelsPerDeck=" + numDuelsPerDeck + " total=" + numDuelsTotal +
-                " mmWarmup=" + matchmakingWarmupDuelsPerDeck);
+                " mmWarmup=" + matchmakingWarmupDuelsPerDeck +
+                " saveReplays=" + saveReplays + (saveReplays ? " winsPerDeck=" + saveReplaysWinsPerDeck : ""));
             for (int i = 0; i < numInstances; i++)
             {
                 engines.Add(new DuelEngineInstance(i + 1, this));
@@ -329,6 +334,53 @@ namespace YgoMaster
                 if (numEnginesFinished < engines.Count)
                 {
                     numEnginesFinished++;
+                }
+            }
+        }
+
+        public string GetReplaysDir()
+        {
+            string dir = Path.Combine(DataDir, "Players", "Local", "Replays");
+            Utils.TryCreateDirectory(dir);
+            return dir;
+        }
+
+        public static string SanitizeReplayName(string name)
+        {
+            if (string.IsNullOrEmpty(name)) return "deck";
+            StringBuilder sb = new StringBuilder();
+            foreach (char c in name)
+            {
+                if (char.IsLetterOrDigit(c) || c == '.' || c == '_' || c == '-')
+                    sb.Append(c);
+                else
+                    sb.Append('_');
+            }
+            string s = sb.ToString();
+            if (s.Length > 40) s = s.Substring(0, 40);
+            return s;
+        }
+
+        public void EnforceCircularReplayLimit(string winnerDeckName)
+        {
+            lock (engines)
+            {
+                try
+                {
+                    string dir = GetReplaysDir();
+                    if (!Directory.Exists(dir)) return;
+                    string pattern = "cpucontest_*_" + SanitizeReplayName(winnerDeckName) + "_W_vs_*.json";
+                    FileInfo[] files = new DirectoryInfo(dir).GetFiles(pattern);
+                    if (files.Length <= saveReplaysWinsPerDeck) return;
+                    Array.Sort(files, (a, b) => b.LastWriteTimeUtc.CompareTo(a.LastWriteTimeUtc));
+                    for (int idx = saveReplaysWinsPerDeck; idx < files.Length; idx++)
+                    {
+                        try { files[idx].Delete(); } catch { }
+                    }
+                }
+                catch (Exception ex)
+                {
+                    Console.WriteLine("[CpuContest] EnforceCircularReplayLimit failed: " + ex.Message);
                 }
             }
         }
@@ -537,9 +589,10 @@ namespace YgoMaster
                                 {
                                     Stopwatch stopwatch = new Stopwatch();
                                     stopwatch.Start();
+                                    string saveReplayDirArg = Contest.saveReplays ? "\"" + Contest.GetReplaysDir() + "\"" : "\"\"";
                                     process.StartInfo.Arguments = "--cpucontest-sim \"" + stats.Deck.File + "\" \"" + opponentStats.Deck.File + "\" " +
                                         Contest.GetNextSeed() + " " + goFirst + " " + Contest.numIterationsBeforeIdle + " " + currentProcess.Id +
-                                        " " + Contest.duelType;
+                                        " " + Contest.duelType + " " + saveReplayDirArg;
                                     process.StartInfo.FileName = "YgoMaster.exe";
                                     process.StartInfo.CreateNoWindow = true;
                                     process.StartInfo.UseShellExecute = false;
@@ -577,6 +630,12 @@ namespace YgoMaster
                                     {
                                         stopwatch.Stop();
                                         Contest.OnDuelResult(stats, opponentStats, goFirst, result, stopwatch.Elapsed);
+                                    }
+                                    // Aplica limite circular de replays por deck (vencedor)
+                                    if (Contest.saveReplays && (result == DuelResultType.Win || result == DuelResultType.Lose))
+                                    {
+                                        DeckInfo winner = (result == DuelResultType.Win) ? stats.Deck : opponentStats.Deck;
+                                        Contest.EnforceCircularReplayLimit(winner.Name ?? Path.GetFileNameWithoutExtension(winner.File));
                                     }
                                 }
                             }
