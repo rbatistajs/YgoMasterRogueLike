@@ -1,10 +1,10 @@
 ﻿using System;
 using System.Collections.Generic;
-using System.Linq;
-using System.Text;
-using System.IO;
-using System.Runtime.InteropServices;
 using System.Diagnostics;
+using System.IO;
+using System.Linq;
+using System.Runtime.InteropServices;
+using System.Text;
 
 namespace YgoMaster
 {
@@ -28,7 +28,7 @@ namespace YgoMaster
                 default:
                     // This crashes when the duel ends
                     //Console.WriteLine("DoRun " + viewType + " p1:" + param1 + " p2:" + param2 + " p3:" + param3 + " | " +
-                        //DLL_DuelGetLP(0) + " " + DLL_DuelGetCardNum(0, 15) + " " + DLL_DuelGetLP(1) + " " + DLL_DuelGetCardNum(1, 15));
+                    //DLL_DuelGetLP(0) + " " + DLL_DuelGetCardNum(0, 15) + " " + DLL_DuelGetLP(1) + " " + DLL_DuelGetCardNum(1, 15));
                     break;
             }
             return 0;
@@ -47,6 +47,17 @@ namespace YgoMaster
             int[] extra = deck.ExtraDeckCards.GetIds().ToArray();
             int[] side = deck.SideDeckCards.GetIds().ToArray();
             DLL_DuelSysSetDeck2(player, main, main.Length, extra, extra.Length, side, side.Length);
+        }
+
+        // Espelho de Pvp.GetCardRare (Pvp.cs:1009-1014). Lista de IDs (main+extra)
+        // de cada deck, paralela. Necessario p/ popular o card rarity buffer
+        // antes do loop DLL_DuelSysAct -- sem isso o engine nao avalia jogadas
+        // (CPU nao joga, preview de replay vazio).
+        int[] GetCardRare(DeckInfo deck)
+        {
+            System.Collections.Generic.IEnumerable<int> main = deck.MainDeckCards.GetCollection().Select(x => (int)x.Value);
+            System.Collections.Generic.IEnumerable<int> extra = deck.ExtraDeckCards.GetCollection().Select(x => (int)x.Value);
+            return main.Concat(extra).ToArray();
         }
 
         uint GetCpuParam(int val, DuelCpuParam param = DuelCpuParam.None)
@@ -109,12 +120,39 @@ namespace YgoMaster
             DLL_SetAddRecordDelegate(replayCb);
             if (duelType.Equals("Rush", StringComparison.OrdinalIgnoreCase))
             {
-                DLL_DuelSysInitRush();
+                DLL_DuelSysInitCustom((int)DllDuelType.Rush, false, 8000, 8000, 4, 4, false);
             }
             else
             {
                 DLL_DuelSysInitCustom((int)DllDuelType.Normal, false, 8000, 8000, 5, 5, false);
             }
+
+            // Card rarity buffer -- igual Pvp.cs:900-909. Sem isso, a CPU nao
+            // tem dados pra avaliar valor dos cards (principalmente Rush) e
+            // fica passando todo turno; e o preview do replay no jogo fica vazio.
+            IntPtr cardRarePtr = IntPtr.Zero;
+            uint cardRareBufferSize = DLL_CardRareGetBufferSize();
+            if (cardRareBufferSize > 0)
+            {
+                cardRarePtr = Marshal.AllocHGlobal((int)cardRareBufferSize);
+                if (cardRarePtr != IntPtr.Zero)
+                {
+                    int[] rare0 = GetCardRare(deck1);
+                    int[] rare1 = GetCardRare(deck2);
+                    DLL_CardRareSetRare(cardRarePtr, rare0, rare1, null, null);
+                    Console.WriteLine("[Sim] CardRareSetRare ok (bufSize=" + cardRareBufferSize +
+                        " rare0.Length=" + rare0.Length + " rare1.Length=" + rare1.Length + ")");
+                }
+                else
+                {
+                    Console.WriteLine("[Sim] WARN: Failed to allocate card rare buffer (" + cardRareBufferSize + " bytes)");
+                }
+            }
+            else
+            {
+                Console.WriteLine("[Sim] WARN: DLL_CardRareGetBufferSize returned 0 -- skipping card rare setup");
+            }
+
             Stopwatch turnTimer = new Stopwatch();
             turnTimer.Start();
             uint lastTurn = 0;
@@ -178,6 +216,11 @@ namespace YgoMaster
                 " turns=" + DLL_DuelGetTurnNum() +
                 " duration=" + sw.Elapsed.TotalSeconds.ToString("F1") + "s" +
                 " replayBytes=" + replayBytes.Length);
+
+            // turns
+            Console.WriteLine("Player 1 life: " + DLL_DuelGetLP(0));
+            Console.WriteLine("Player 2 life: " + DLL_DuelGetLP(1));
+            Console.WriteLine("Turns: " + DLL_DuelGetTurnNum());
 
             // Salvar replay so quando ha vencedor (nao Draw) e foi pedido path.
             DuelResultType resultType = (DuelResultType)finalResult;
@@ -306,7 +349,7 @@ namespace YgoMaster
                 }
                 System.Threading.Thread.Sleep(1);
             }
-            
+
             Console.WriteLine(sw.Elapsed);
         }
 

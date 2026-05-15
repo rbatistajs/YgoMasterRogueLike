@@ -57,7 +57,7 @@ namespace YgoMaster
         [DllImport(dllName)]
         private static extern void DLL_CardRareSetBuffer(IntPtr pBuf);
         [DllImport(dllName)]
-        private static extern void DLL_CardRareSetRare(IntPtr pBuf, IntPtr rare0, IntPtr rare1, IntPtr rare2, IntPtr rare3);
+        private static extern void DLL_CardRareSetRare(IntPtr pBuf, int[] rare0, int[] rare1, int[] rare2, int[] rare3);
         [DllImport(dllName)]
         private static extern bool DLL_DeulIsThisEffectiveMonsterWithDual(int player, int index);
         [DllImport(dllName)]
