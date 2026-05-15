@@ -1239,6 +1239,12 @@ namespace YgoMaster
             if (string.Equals(PvpDuelType, "Rush", StringComparison.OrdinalIgnoreCase))
             {
                 duelSettings.Type = (int)DuelType.Rush;
+                // Rush Duel: starting hand = 4 (Normal usa 5). Sobrescreve o default
+                // que Pvp.cs:870 aplica (5) quando hnum chega como 0.
+                for (int i = 0; i < duelSettings.hnum.Length; i++)
+                {
+                    duelSettings.hnum[i] = 4;
+                }
             }
             request.Player.ActiveDuelSettings.CopyFrom(duelSettings);
             request.Player.ActiveDuelSettings.PvpChoice = table.CoinFlipPlayerIndex;
