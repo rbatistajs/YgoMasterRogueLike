@@ -77,8 +77,8 @@ namespace YgoMaster
             deck2.File = deckFile2;
             deck2.Load();
 
-            // Replay capture: AddRecord callback acumula bytes no MemoryStream.
-            // duel.dll invoca o callback a cada acao do duelo (mesmo mecanismo do --pvp).
+            // Replay capture: the AddRecord callback accumulates bytes into a MemoryStream.
+            // duel.dll invokes the callback on every duel action (same mechanism as --pvp).
             MemoryStream replayRec = new MemoryStream();
             AddRecord replayCb = (ptr, size) =>
             {
@@ -179,7 +179,7 @@ namespace YgoMaster
                 " duration=" + sw.Elapsed.TotalSeconds.ToString("F1") + "s" +
                 " replayBytes=" + replayBytes.Length);
 
-            // Salvar replay so quando ha vencedor (nao Draw) e foi pedido path.
+            // Save the replay only when there is a winner (not Draw) and a path was requested.
             DuelResultType resultType = (DuelResultType)finalResult;
             if (!string.IsNullOrEmpty(saveReplayDir) && (resultType == DuelResultType.Win || resultType == DuelResultType.Lose) && replayBytes.Length > 0)
             {
@@ -220,8 +220,8 @@ namespace YgoMaster
             string winnerName = !string.IsNullOrEmpty(winner.Name) ? winner.Name : Path.GetFileNameWithoutExtension(winner.File);
             string loserName = !string.IsNullOrEmpty(loser.Name) ? loser.Name : Path.GetFileNameWithoutExtension(loser.File);
 
-            // Empacotamento: base64(MessagePack({b: zlib(replayBytes), f: [finish, finish]}))
-            // Mesmo formato que DuelStarter.GetReplayDataString produz client-side
+            // Packaging: base64(MessagePack({b: zlib(replayBytes), f: [finish, finish]}))
+            // Same format DuelStarter.GetReplayDataString produces client-side.
             byte[] zlibBytes = Utils.ZLibCompress(replayBytes);
             Dictionary<string, object> packDict = new Dictionary<string, object>();
             packDict["b"] = zlibBytes;
@@ -229,7 +229,7 @@ namespace YgoMaster
             byte[] msgpackBytes = MessagePack.Pack(packDict);
             string replaym = Convert.ToBase64String(msgpackBytes);
 
-            // Montar DuelSettings minimal pra UI Replay listar
+            // Build minimal DuelSettings so the Replay UI can list it.
             DuelSettings ds = new DuelSettings();
             ds.DuelBeginTime = duelBeginEpoch;
             ds.DuelEndTime = Utils.GetEpochTime();

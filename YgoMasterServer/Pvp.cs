@@ -865,9 +865,9 @@ namespace YgoMaster
                     throw new Exception("Failed to init content");
                 }
 
-                // Defaults por DuelType -- Rush comeca com 4 cartas, Normal com 5.
-                // LP default 8000 em ambos. duelSettings vem zerado quando o client
-                // nao especifica (caminho PvP normal).
+                // Defaults per DuelType -- Rush starts with 4 cards, Normal with 5.
+                // Default LP is 8000 in both. duelSettings comes in zeroed when the
+                // client does not specify (regular PvP path).
                 int defaultHand = ((DuelType)duelSettings.Type == DuelType.Rush) ? 4 : 5;
                 int defaultLife = 8000;
                 for (int i = 0; i < 2; i++)
@@ -900,8 +900,8 @@ namespace YgoMaster
                 DLL_DuelSetFirstPlayer(duelSettings.FirstPlayer);
                 DLL_DuelSetDuelLimitedType((uint)DuelLimitedType.None);
                 DLL_SetAddRecordDelegate(addRecord);
-                // Traduz server DuelType (Normal=0, Extra=1, Tag=2, Speed=3, Rush=4)
-                // pra DLL fDuelType (Normal=0, Speed=1, Rush=2). Outros tipos viram Normal.
+                // Translate server DuelType (Normal=0, Extra=1, Tag=2, Speed=3, Rush=4)
+                // to DLL fDuelType (Normal=0, Speed=1, Rush=2). Other types fall back to Normal.
                 int fDuelType = 0;
                 switch ((DuelType)duelSettings.Type)
                 {

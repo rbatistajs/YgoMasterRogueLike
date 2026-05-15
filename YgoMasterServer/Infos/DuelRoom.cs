@@ -70,6 +70,14 @@ namespace YgoMaster
         /// </summary>
         public int Rule;
 
+        /// <summary>
+        /// DuelType of the room -- uses the server enum (Normal=0, Rush=4 etc).
+        /// Set in Act_RoomCreate from room_settings["duel_type"] (injected by the
+        /// mod on the client side). Defaults to 0 (Normal). When 0, Act_Room falls
+        /// back to the global PvpDuelType from Settings.json.
+        /// </summary>
+        public int DuelType;
+
         public DateTime TimeCreated;
         public DateTime TimeUpdated;
         public DateTime TimeExpire;

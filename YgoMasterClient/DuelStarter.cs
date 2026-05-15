@@ -194,6 +194,8 @@ namespace YgomSystem.Network
         static Hook<Del_Duel_begin> hookDuel_begin;
         delegate IntPtr Del_Duel_end(IntPtr paramPtr);
         static Hook<Del_Duel_end> hookDuel_end;
+        delegate IntPtr Del_Room_create(IntPtr settingsPtr);
+        static Hook<Del_Room_create> hookRoom_create;
 
         static API()
         {
@@ -201,6 +203,17 @@ namespace YgomSystem.Network
             IL2Class classInfo = assembly.GetClass("API", "YgomSystem.Network");
             hookDuel_begin = new Hook<Del_Duel_begin>(Duel_begin, classInfo.GetMethod("Duel_begin"));
             hookDuel_end = new Hook<Del_Duel_end>(Duel_end, classInfo.GetMethod("Duel_end"));
+            // Pick the Room_room_create overload that takes a single parameter (IntPtr settings).
+            IL2Method roomCreateMethod = classInfo.GetMethod("Room_room_create", x => x.GetParameters().Length == 1);
+            if (roomCreateMethod != null)
+            {
+                hookRoom_create = new Hook<Del_Room_create>(Room_create, roomCreateMethod);
+                Console.WriteLine("[API] Room_room_create hook installed (1-arg overload)");
+            }
+            else
+            {
+                Console.WriteLine("[API] WARN: Room_room_create(1arg) method NOT FOUND");
+            }
 
             IL2Class zlibClassInfo = assembly.GetClass("Zlib");
             methodCompress = zlibClassInfo.GetMethod("Compress");
@@ -231,6 +244,40 @@ namespace YgomSystem.Network
                 rulePtr = YgomMiniJSON.Json.Deserialize(MiniJSON.Json.Serialize(rule));
             }
             return hookDuel_begin.Original(rulePtr);
+        }
+
+        // Injects room_settings.duel_type into the outgoing JSON when the user picked
+        // anything != Normal in the native view's dropdown. Server (Act_RoomCreate)
+        // reads the field and sets DuelRoom.DuelType -> Pvp.cs applies it to the engine.
+        static IntPtr Room_create(IntPtr settingsPtr)
+        {
+            int duelTypeValue = YgomGame.Room.RoomCreateViewController.PendingPvpDuelType;
+            if (duelTypeValue == (int)DuelType.Normal)
+            {
+                // Nothing to mutate -- skip the JSON roundtrip on every Room_create.
+                return hookRoom_create.Original(settingsPtr);
+            }
+            try
+            {
+                Dictionary<string, object> payload = MiniJSON.Json.Deserialize(YgomMiniJSON.Json.Serialize(settingsPtr)) as Dictionary<string, object>;
+                if (payload != null)
+                {
+                    Dictionary<string, object> roomSettings = payload;
+                    object rsObj;
+                    if (payload.TryGetValue("room_settings", out rsObj) && rsObj is Dictionary<string, object>)
+                    {
+                        roomSettings = (Dictionary<string, object>)rsObj;
+                    }
+                    roomSettings["duel_type"] = duelTypeValue;
+                    settingsPtr = YgomMiniJSON.Json.Deserialize(MiniJSON.Json.Serialize(payload));
+                    Console.WriteLine("[Room_create] injected duel_type=" + duelTypeValue);
+                }
+            }
+            catch (Exception ex)
+            {
+                Console.WriteLine("[Room_create hook] FAILED: " + ex);
+            }
+            return hookRoom_create.Original(settingsPtr);
         }
 
         static IntPtr Duel_end(IntPtr paramPtr)
@@ -654,6 +701,48 @@ namespace YgomGame.Room
         static IntPtr activeButton;
         static DuelSettingsManager duelSettingsManager = new DuelSettingsManager();
 
+        // DuelType dropdown injected into the native PvP Room Create view (non-hacked path).
+        // pvpDuelTypeButton/pvpDuelTypeView are cleared in NotificationStackRemove to
+        // avoid stale IntPtr use after IL2CPP destroys the view.
+        static IntPtr pvpDuelTypeButton = IntPtr.Zero;
+        static IntPtr pvpDuelTypeView = IntPtr.Zero;
+        public static int PendingPvpDuelType = (int)DuelType.Normal;
+        static readonly string[] pvpDuelTypeOptions = new[] { "Normal", "Rush" };
+        // Cached setter/getter for the currentValue property -- avoids IL2CPP lookup
+        // on every selection/read.
+        static IL2Method pvpDuelTypeButtonSetter;
+        static IL2Method pvpDuelTypeButtonGetter;
+        // ActionSheet callback must be a static field, not an inline lambda -- otherwise
+        // the GC can release the delegate before Unity invokes it (crash).
+        static readonly Action<IntPtr, int> OnPvpDuelTypeSelected = OnPvpDuelTypeSelectedImpl;
+        static int DuelTypeFromOptionString(string name)
+        {
+            return string.Equals(name, "Rush", StringComparison.OrdinalIgnoreCase)
+                ? (int)DuelType.Rush
+                : (int)DuelType.Normal;
+        }
+        static void OnPvpDuelTypeSelectedImpl(IntPtr ctx, int index)
+        {
+            if (index < 0 || index >= pvpDuelTypeOptions.Length) return;
+            string chosen = pvpDuelTypeOptions[index];
+            PendingPvpDuelType = DuelTypeFromOptionString(chosen);
+            try
+            {
+                if (pvpDuelTypeButton != IntPtr.Zero && pvpDuelTypeButtonSetter != null)
+                {
+                    pvpDuelTypeButtonSetter.Invoke(pvpDuelTypeButton, new IntPtr[] { new IL2String(chosen).ptr });
+                }
+                if (pvpDuelTypeView != IntPtr.Zero)
+                {
+                    YgomSystem.UI.InfinityScroll.InfinityScrollView.UpdateData(fieldIsv.GetValue(pvpDuelTypeView).ptr);
+                }
+            }
+            catch (Exception ex)
+            {
+                Console.WriteLine("[RoomCreate] DuelType set failed: " + ex);
+            }
+        }
+
         static Dictionary<IntPtr, string[]> buttonsActionSheets = new Dictionary<IntPtr, string[]>();
 
         public static bool IsNextInstanceHacked = false;
@@ -699,6 +788,8 @@ namespace YgomGame.Room
             buttonStringInfoClass = ClassInfo.GetNestedType("ButtonStringInfo");
             buttonStringInfoCtor = buttonStringInfoClass.GetMethod(".ctor");
             buttonStringInfoCurrentValue = buttonStringInfoClass.GetProperty("currentValue");
+            pvpDuelTypeButtonSetter = buttonStringInfoCurrentValue.GetSetMethod();
+            pvpDuelTypeButtonGetter = buttonStringInfoCurrentValue.GetGetMethod();
             buttonBoolValueInfoClass = ClassInfo.GetNestedType("ButtonBoolValueInfo");
             buttonBoolValueInfoCtor = buttonBoolValueInfoClass.GetMethod(".ctor");
             buttonBoolValueInfoCurrentValue = buttonBoolValueInfoClass.GetProperty("currentValue");
@@ -712,6 +803,29 @@ namespace YgomGame.Room
             {
                 activeViewController = IntPtr.Zero;
                 hookOnCreatedView.Original.Invoke(thisPtr);
+                // Append the "Duel Type" dropdown to the native view. Initial state
+                // comes from ClientSettings.PvpDuelType; pointers are cached for cleanup
+                // in NotificationStackRemove.
+                try
+                {
+                    IntPtr existingInfos = fieldInfos.GetValue(thisPtr).ptr;
+                    if (existingInfos != IntPtr.Zero)
+                    {
+                        IL2ListExplicit infosList = new IL2ListExplicit(existingInfos, templateInfoClass);
+                        int initialType = DuelTypeFromOptionString(ClientSettings.PvpDuelType);
+                        // Action sheet: the first entry is the initial value shown on the button.
+                        string[] options = initialType == (int)DuelType.Rush
+                            ? new[] { "Rush", "Normal" }
+                            : new[] { "Normal", "Rush" };
+                        pvpDuelTypeButton = AddButtonString(infosList, "DuelType", "Duel Type", options);
+                        pvpDuelTypeView = thisPtr;
+                        PendingPvpDuelType = initialType;
+                    }
+                }
+                catch (Exception ex)
+                {
+                    Console.WriteLine("[RoomCreate] add DuelType button failed: " + ex);
+                }
                 return;
             }
             IsNextInstanceHacked = false;
@@ -737,6 +851,12 @@ namespace YgomGame.Room
             {
                 duelSettingsManager.DuelSettingsFromUI();
                 activeViewController = IntPtr.Zero;
+            }
+            // Avoid stale IntPtr after the native RoomCreate view is destroyed.
+            if (pvpDuelTypeView == thisPtr)
+            {
+                pvpDuelTypeView = IntPtr.Zero;
+                pvpDuelTypeButton = IntPtr.Zero;
             }
         }
 
@@ -775,6 +895,21 @@ namespace YgomGame.Room
             }
             else
             {
+                try
+                {
+                    if (pvpDuelTypeButton != IntPtr.Zero && pvpDuelTypeButtonGetter != null)
+                    {
+                        IL2Object valueObj = pvpDuelTypeButtonGetter.Invoke(pvpDuelTypeButton, new IntPtr[0]);
+                        if (valueObj != null)
+                        {
+                            PendingPvpDuelType = DuelTypeFromOptionString(new IL2String(valueObj.ptr).ToString());
+                        }
+                    }
+                }
+                catch (Exception ex)
+                {
+                    Console.WriteLine("[RoomCreate] read DuelType failed: " + ex);
+                }
                 hookCallAPIRoomCreate.Original(thisPtr);
             }
         }
@@ -819,6 +954,17 @@ namespace YgomGame.Room
 
         static void OnClick(IntPtr buttonPtr)
         {
+            // Click on the "Duel Type" dropdown injected into the native PvP Room Create.
+            // Pointer compare first so we short-circuit without calling IsHacked.
+            if (buttonPtr == pvpDuelTypeButton && pvpDuelTypeButton != IntPtr.Zero && !IsHacked)
+            {
+                int selectedIdx = PendingPvpDuelType == (int)DuelType.Rush ? 1 : 0;
+                if (!YgomGame.Menu.ActionSheetViewController.TryOpenRadio("Duel Type", pvpDuelTypeOptions, selectedIdx, OnPvpDuelTypeSelected))
+                {
+                    YgomGame.Menu.ActionSheetViewController.Open("Duel Type", pvpDuelTypeOptions, OnPvpDuelTypeSelected);
+                }
+                return;
+            }
             if (IsHacked)
             {
                 // NOTE: This type checking is required as the OnClick RVA is shared with multiple functions

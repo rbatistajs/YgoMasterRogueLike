@@ -257,6 +257,7 @@ namespace YgoMaster
             duelRoom.Rule = Utils.GetValue<int>(roomSettings, "battle_rule");
             duelRoom.DuelTime = Utils.GetValue<int>(roomSettings, "battle_time");
             duelRoom.LifePoints = Utils.GetValue<int>(roomSettings, "battle_lp");
+            duelRoom.DuelType = Utils.GetValue<int>(roomSettings, "duel_type");// 0=server default (Normal), 4=Rush -- injected by the client mod
             duelRoom.ShowInRoomList = Utils.GetValue<bool>(roomSettings, "is_public");
             duelRoom.ShowInSpectatorList = Utils.GetValue<bool>(roomSettings, "is_specter");
             duelRoom.AllowSpectators = Utils.GetValue<bool>(roomSettings, "is_spectral");
@@ -1235,9 +1236,14 @@ namespace YgoMaster
             duelSettings.SetRequiredDefaults();
             //duelSettings.BgmsFromValue(table.Bgm);// table.Bgm is a random BGM used to be shared between both players
             duelSettings.SetBgm(request.Player.DuelBgmMode);
-            // PvP DuelType configuravel via Settings.json "PvpDuelType". Default "Normal".
-            // Defaults de hand/life sao aplicados em Pvp.cs com base em Type.
-            if (string.Equals(PvpDuelType, "Rush", StringComparison.OrdinalIgnoreCase))
+            // Per-room (room_settings.duel_type injected by the client mod) takes
+            // priority; falls back to the global Settings.json PvpDuelType.
+            // Hand/life defaults are applied in Pvp.cs based on the Type.
+            if (duelRoom.DuelType != (int)DuelType.Normal)
+            {
+                duelSettings.Type = duelRoom.DuelType;
+            }
+            else if (string.Equals(PvpDuelType, "Rush", StringComparison.OrdinalIgnoreCase))
             {
                 duelSettings.Type = (int)DuelType.Rush;
             }

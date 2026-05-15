@@ -279,9 +279,9 @@ namespace YgoMaster
         /// </summary>
         public int MultiplayerPvpClientDuelDllSize;
         /// <summary>
-        /// DuelType pra PvP -- "Normal" (default) ou "Rush". Lido em Settings.json
-        /// e aplicado em duelSettings.Type quando uma sala PvP inicia (Act_Room.cs).
-        /// O Pvp.cs:898 traduz pra DllDuelType e passa pra DLL_DuelSysInitCustom.
+        /// PvP DuelType -- "Normal" (default) or "Rush". Read from Settings.json and
+        /// applied to duelSettings.Type when a PvP room starts (Act_Room.cs). Pvp.cs:898
+        /// then translates it into the DLL DuelType and passes it to DLL_DuelSysInitCustom.
         /// </summary>
         public string PvpDuelType;
         /// <summary>
@@ -462,7 +462,7 @@ namespace YgoMaster
             MultiplayerPvpClientRunDialogUserOffset = Utils.GetValue<int>(values, "MultiplayerPvpClientRunDialogUserOffset");
             MultiplayerPvpClientDuelDllSize = Utils.GetValue<int>(values, "MultiplayerPvpClientDuelDllSize");
             PvpDuelType = Utils.GetValue<string>(values, "PvpDuelType", "Normal");
-            // Sanitize: aceita case-insensitive "Normal" ou "Rush", caso contrario default
+            // Sanitize: accepts case-insensitive "Normal" or "Rush"; anything else falls back to Normal.
             if (!string.Equals(PvpDuelType, "Rush", StringComparison.OrdinalIgnoreCase))
             {
                 PvpDuelType = "Normal";

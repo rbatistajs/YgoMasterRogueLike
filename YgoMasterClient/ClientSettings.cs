@@ -68,6 +68,9 @@ namespace YgoMasterClient
         public static bool PvpLogToConsole;
         public static bool PvpLogToFile;
         public static bool PvpDuelTapSyncEnabled;
+        // "Normal" (default) or "Rush" -- applied to room_settings.duel_type when
+        // creating a PvP room. Server translates it into DuelSettings.Type.
+        public static string PvpDuelType;
         public static float EmoteDurationInSeconds;
         public static GameLauncherMode LaunchMode;
         public static List<int> BrokenItems;
@@ -191,6 +194,7 @@ namespace YgoMasterClient
             PvpLogToConsole = Utils.GetValue<bool>(data, "PvpLogToConsole");
             PvpLogToFile = Utils.GetValue<bool>(data, "PvpLogToFile");
             PvpDuelTapSyncEnabled = Utils.GetValue<bool>(data, "PvpDuelTapSyncEnabled");
+            PvpDuelType = Utils.GetValue<string>(data, "PvpDuelType", "Normal");
             EmoteDurationInSeconds = Utils.GetValue<float>(data, "EmoteDurationInSeconds");
             LaunchMode = Utils.GetValue<GameLauncherMode>(data, "LaunchMode");
             BrokenItems = Utils.GetIntList(data, "BrokenItems");

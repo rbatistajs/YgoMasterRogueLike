@@ -94,7 +94,7 @@ namespace YgoMaster
             }
             else
             {
-                Console.WriteLine("[CpuContest] WARN: duelType invalido '" + rawDuelType + "', usando Normal");
+                Console.WriteLine("[CpuContest] WARN: invalid duelType '" + rawDuelType + "', falling back to Normal");
                 duelType = "Normal";
             }
             matchmakingWarmupDuelsPerDeck = Utils.GetValue(settings, "matchmakingWarmupDuelsPerDeck", 10);
@@ -131,7 +131,7 @@ namespace YgoMaster
             }
             numDuelsTotal = ((decks.Count + (decks.Count % 2)) / 2) * numDuelsPerDeck;
             UpdateProgressBar();
-            Console.WriteLine("[CpuContest] Iniciando contest -- decks=" + decks.Count +
+            Console.WriteLine("[CpuContest] Starting contest -- decks=" + decks.Count +
                 " instances=" + numInstances + " duelType=" + duelType +
                 " duelsPerDeck=" + numDuelsPerDeck + " total=" + numDuelsTotal +
                 " mmWarmup=" + matchmakingWarmupDuelsPerDeck +
@@ -229,9 +229,9 @@ namespace YgoMaster
                 DeckInfo deck = GetNextDeck();
                 DeckStats result = decks[deck];
 
-                // Matchmaking por Elo: se todos os decks atingiram o warmup, escolher oponente
-                // por rating mais proximo (top-3 candidatos no decksRemaining, sorteia 1).
-                // Caso contrario (warmup), mantem o comportamento original (random shuffle).
+                // Elo-based matchmaking: once every deck has hit the warmup quota, pick the
+                // opponent by closest rating (top-3 candidates in decksRemaining, random one).
+                // Otherwise (still in warmup), keep the original behavior (random shuffle).
                 bool warmupComplete = true;
                 foreach (DeckStats s in decks.Values)
                 {
@@ -244,7 +244,7 @@ namespace YgoMaster
 
                 if (warmupComplete && decksRemaining.Count > 0)
                 {
-                    // candidatos = decksRemaining ordenado por |rating - result.Rating|, asc
+                    // candidates = decksRemaining sorted by |rating - result.Rating| ascending
                     double myRating = result.Rating;
                     List<DeckInfo> candidates = new List<DeckInfo>(decksRemaining);
                     candidates.Sort((a, b) =>
@@ -281,7 +281,7 @@ namespace YgoMaster
                             if (n < minDuels) minDuels = n;
                         }
                         Console.WriteLine("[CpuContest] Matchmaking: random (warmup, min " +
-                            minDuels + "/" + matchmakingWarmupDuelsPerDeck + " duelos/deck)");
+                            minDuels + "/" + matchmakingWarmupDuelsPerDeck + " duels/deck)");
                     }
                 }
 
@@ -596,7 +596,7 @@ namespace YgoMaster
                                     process.StartInfo.FileName = "YgoMaster.exe";
                                     process.StartInfo.CreateNoWindow = true;
                                     process.StartInfo.UseShellExecute = false;
-                                    // Redirecionar stdout/stderr do filho pra logar no console do pai com prefixo da engine
+                                    // Forward the child's stdout/stderr into the parent's console, prefixed with the engine id.
                                     process.StartInfo.RedirectStandardOutput = true;
                                     process.StartInfo.RedirectStandardError = true;
                                     int engineId = Id;
@@ -631,7 +631,7 @@ namespace YgoMaster
                                         stopwatch.Stop();
                                         Contest.OnDuelResult(stats, opponentStats, goFirst, result, stopwatch.Elapsed);
                                     }
-                                    // Aplica limite circular de replays por deck (vencedor)
+                                    // Enforce circular replay limit per deck (winner side).
                                     if (Contest.saveReplays && (result == DuelResultType.Win || result == DuelResultType.Lose))
                                     {
                                         DeckInfo winner = (result == DuelResultType.Win) ? stats.Deck : opponentStats.Deck;
