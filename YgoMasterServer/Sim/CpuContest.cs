@@ -29,6 +29,8 @@ namespace YgoMaster
         int numDuelsStarted;
         int numDuelsComplete;
         string duelType;
+        int matchmakingWarmupDuelsPerDeck;
+        int loggedMatchmakingMode; // 0=none, 1=warmup logged, 2=elo logged
 
         public CpuContest(string dataDir)
         {
@@ -93,6 +95,7 @@ namespace YgoMaster
                 Console.WriteLine("[CpuContest] WARN: duelType invalido '" + rawDuelType + "', usando Normal");
                 duelType = "Normal";
             }
+            matchmakingWarmupDuelsPerDeck = Utils.GetValue(settings, "matchmakingWarmupDuelsPerDeck", 10);
             foreach (string deckFile in Directory.GetFiles(decksDir))
             {
                 try
@@ -126,7 +129,8 @@ namespace YgoMaster
             UpdateProgressBar();
             Console.WriteLine("[CpuContest] Iniciando contest -- decks=" + decks.Count +
                 " instances=" + numInstances + " duelType=" + duelType +
-                " duelsPerDeck=" + numDuelsPerDeck + " total=" + numDuelsTotal);
+                " duelsPerDeck=" + numDuelsPerDeck + " total=" + numDuelsTotal +
+                " mmWarmup=" + matchmakingWarmupDuelsPerDeck);
             for (int i = 0; i < numInstances; i++)
             {
                 engines.Add(new DuelEngineInstance(i + 1, this));
@@ -218,8 +222,64 @@ namespace YgoMaster
                     return null;
                 }
                 DeckInfo deck = GetNextDeck();
-                opponent = decks[GetNextDeck()];
                 DeckStats result = decks[deck];
+
+                // Matchmaking por Elo: se todos os decks atingiram o warmup, escolher oponente
+                // por rating mais proximo (top-3 candidatos no decksRemaining, sorteia 1).
+                // Caso contrario (warmup), mantem o comportamento original (random shuffle).
+                bool warmupComplete = true;
+                foreach (DeckStats s in decks.Values)
+                {
+                    if (s.GetNumDuels() < matchmakingWarmupDuelsPerDeck)
+                    {
+                        warmupComplete = false;
+                        break;
+                    }
+                }
+
+                if (warmupComplete && decksRemaining.Count > 0)
+                {
+                    // candidatos = decksRemaining ordenado por |rating - result.Rating|, asc
+                    double myRating = result.Rating;
+                    List<DeckInfo> candidates = new List<DeckInfo>(decksRemaining);
+                    candidates.Sort((a, b) =>
+                    {
+                        double da = Math.Abs(decks[a].Rating - myRating);
+                        double db = Math.Abs(decks[b].Rating - myRating);
+                        return da.CompareTo(db);
+                    });
+                    int topK = Math.Min(3, candidates.Count);
+                    DeckInfo chosen = candidates[rand.Next(topK)];
+                    decksRemaining.Remove(chosen);
+                    opponent = decks[chosen];
+
+                    if (System.Threading.Interlocked.CompareExchange(ref loggedMatchmakingMode, 2, 1) == 1
+                        || System.Threading.Interlocked.CompareExchange(ref loggedMatchmakingMode, 2, 0) == 0)
+                    {
+                        double dChosen = Math.Abs(decks[chosen].Rating - myRating);
+                        Console.WriteLine("[CpuContest] Matchmaking: Elo (delta=" + (int)dChosen +
+                            ", " + result.Deck.Name + " r" + (int)myRating +
+                            " vs " + opponent.Deck.Name + " r" + (int)opponent.Rating + ")");
+                    }
+                }
+                else
+                {
+                    // Random (warmup)
+                    opponent = decks[GetNextDeck()];
+
+                    if (System.Threading.Interlocked.CompareExchange(ref loggedMatchmakingMode, 1, 0) == 0)
+                    {
+                        int minDuels = int.MaxValue;
+                        foreach (DeckStats s in decks.Values)
+                        {
+                            int n = s.GetNumDuels();
+                            if (n < minDuels) minDuels = n;
+                        }
+                        Console.WriteLine("[CpuContest] Matchmaking: random (warmup, min " +
+                            minDuels + "/" + matchmakingWarmupDuelsPerDeck + " duelos/deck)");
+                    }
+                }
+
                 goFirst = result.GetNumGoFirstDuels() <= opponent.GetNumGoSecondDuels();
                 numDuelsStarted++;
                 return result;
