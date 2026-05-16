@@ -1,5 +1,6 @@
 using System;
 using System.Collections.Generic;
+using System.IO;
 
 namespace YgoMaster
 {
@@ -30,6 +31,15 @@ namespace YgoMaster
 
         // Called once after decks are loaded, before any pairing call.
         public virtual void Initialize(DeckStatsRegistry allDecks, Random rand) { }
+
+        // Resume-from-disk hook. Called before Initialize so subclasses can
+        // hydrate persistent state (e.g. RoundRobin's pair history). Default no-op.
+        public virtual void LoadState(string stateDir) { }
+
+        // Called by CpuContest after each duel finishes. Default no-op.
+        // RoundRobin uses it to tick per-pair counters and write them back to disk
+        // so a restarted contest doesn't replay pairs that already met the quota.
+        public virtual void OnDuelComplete(DeckInfo primary, DeckInfo opponent) { }
 
         // Returns true with a (primary, opponent) pair, or false when the
         // contest schedule is exhausted (RoundRobin uses this; Random/Elo
@@ -212,15 +222,21 @@ namespace YgoMaster
     // Every deck duels every other deck exactly RoundRobinDuelsPerPair times.
     // Ignores ContestSettings.duelsPerDeck -- total is C(n,2) * duelsPerPair.
     // Pairs are shuffled once at Initialize so engines don't all play the same
-    // pair in the same order.
+    // pair in the same order. Resumes correctly across restarts by persisting
+    // a per-pair counter to pair_history.json.
     sealed class RoundRobinMatchmaking : MatchmakingStrategy
     {
         public const string StrategyName = "RoundRobin";
+        public const string PairHistoryFileName = "pair_history.json";
         public override string Name { get { return StrategyName; } }
 
         public int DuelsPerPair { get; private set; }
 
         readonly Queue<Pairing> queue = new Queue<Pairing>();
+        // Number of duels already completed per canonical pair key.
+        // Persisted to <stateDir>/pair_history.json across runs.
+        readonly Dictionary<string, int> pairHistory = new Dictionary<string, int>();
+        string pairHistoryPath;
         bool logged;
 
         struct Pairing { public DeckInfo A; public DeckInfo B; }
@@ -245,16 +261,53 @@ namespace YgoMaster
             return deckCount * (deckCount - 1) / 2 * DuelsPerPair;
         }
 
+        // Canonical pair key: sorted by name so (A,B) and (B,A) collide.
+        static string PairKey(string a, string b)
+        {
+            return string.Compare(a, b, StringComparison.Ordinal) <= 0
+                ? a + "||" + b
+                : b + "||" + a;
+        }
+
+        public override void LoadState(string stateDir)
+        {
+            pairHistoryPath = Path.Combine(stateDir, PairHistoryFileName);
+            pairHistory.Clear();
+            if (!File.Exists(pairHistoryPath)) return;
+            try
+            {
+                Dictionary<string, object> data = MiniJSON.Json.Deserialize(File.ReadAllText(pairHistoryPath)) as Dictionary<string, object>;
+                if (data == null) return;
+                foreach (KeyValuePair<string, object> entry in data)
+                {
+                    int n;
+                    if (entry.Value is long) n = (int)(long)entry.Value;
+                    else if (entry.Value is int) n = (int)entry.Value;
+                    else if (!int.TryParse(entry.Value == null ? "0" : entry.Value.ToString(), out n)) n = 0;
+                    if (n > 0) pairHistory[entry.Key] = n;
+                }
+            }
+            catch (Exception ex)
+            {
+                Console.WriteLine("[RoundRobin] LoadState failed: " + ex.Message);
+            }
+        }
+
         public override void Initialize(DeckStatsRegistry allDecks, Random rand)
         {
             queue.Clear();
             List<DeckInfo> decks = new List<DeckInfo>(allDecks.AllDecks);
             List<Pairing> pairs = new List<Pairing>();
+            int skipped = 0;
             for (int i = 0; i < decks.Count; i++)
             {
                 for (int j = i + 1; j < decks.Count; j++)
                 {
-                    for (int k = 0; k < DuelsPerPair; k++)
+                    int alreadyDone;
+                    pairHistory.TryGetValue(PairKey(decks[i].Name, decks[j].Name), out alreadyDone);
+                    int remaining = DuelsPerPair - alreadyDone;
+                    if (remaining <= 0) { skipped++; continue; }
+                    for (int k = 0; k < remaining; k++)
                     {
                         pairs.Add(new Pairing { A = decks[i], B = decks[j] });
                     }
@@ -268,6 +321,39 @@ namespace YgoMaster
                 pairs[i] = tmp;
             }
             foreach (Pairing p in pairs) queue.Enqueue(p);
+            if (skipped > 0)
+            {
+                Console.WriteLine("[RoundRobin] resumed -- " + skipped + " pairs already complete, "
+                    + queue.Count + " duels left in queue");
+            }
+        }
+
+        public override void OnDuelComplete(DeckInfo primary, DeckInfo opponent)
+        {
+            if (primary == null || opponent == null) return;
+            string key = PairKey(primary.Name, opponent.Name);
+            lock (pairHistory)
+            {
+                int n;
+                pairHistory.TryGetValue(key, out n);
+                pairHistory[key] = n + 1;
+                if (!string.IsNullOrEmpty(pairHistoryPath))
+                {
+                    try
+                    {
+                        Dictionary<string, object> data = new Dictionary<string, object>();
+                        foreach (KeyValuePair<string, int> kv in pairHistory)
+                        {
+                            data[kv.Key] = kv.Value;
+                        }
+                        File.WriteAllText(pairHistoryPath, MiniJSON.Json.Format(MiniJSON.Json.Serialize(data)));
+                    }
+                    catch (Exception ex)
+                    {
+                        Console.WriteLine("[RoundRobin] save pair_history failed: " + ex.Message);
+                    }
+                }
+            }
         }
 
         public override bool TryPickNextPair(

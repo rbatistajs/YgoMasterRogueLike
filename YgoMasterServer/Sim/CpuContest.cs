@@ -173,6 +173,7 @@ namespace YgoMaster
                 numDuelsStarted += numDuels;
                 numDuelsComplete += numDuels;
             }
+            matchmaking.LoadState(DuelTypeDir);
             matchmaking.Initialize(deckStatsRegistry, rand);
             numDuelsTotal = matchmaking.ComputeTotalDuels(decks.Count, numDuelsPerDeck);
             UpdateProgressBar();
@@ -307,6 +308,9 @@ namespace YgoMaster
                 // TODO: Maybe save periodically instead of after every duel?
                 stats.Save();
                 opponentStats.Save();
+                // Notify the strategy so it can persist its own state (RoundRobin
+                // uses this to tick pair_history.json).
+                matchmaking.OnDuelComplete(stats.Deck, opponentStats.Deck);
             }
         }
 
