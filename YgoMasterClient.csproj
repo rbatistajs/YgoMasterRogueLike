@@ -64,6 +64,7 @@
     <Compile Include="YgoMasterClient\SimpleProxy.cs" />
     <Compile Include="YgoMasterClient\SoloVisualNovel.cs" />
     <Compile Include="YgoMasterClient\SoloVisualNovelChapterView.cs" />
+    <Compile Include="YgoMasterClient\SoloDeckRegulationFilter.cs" />
     <Compile Include="YgoMasterClient\SoundInterceptor.cs" />
     <Compile Include="YgoMasterClient\TradeUtils.cs" />
     <Compile Include="YgoMasterClient\ClientSettings.Text.cs" />

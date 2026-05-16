@@ -215,7 +215,6 @@ namespace YgoMaster
         void WriteSolo_deck_info(GameServerWebRequest request)
         {
             DeckInfo deck = request.Player.Duel.GetDeck(GameMode.SoloSingle);
-            Dictionary<string, object> solo = request.GetOrCreateDictionary("Solo");
             int regulationId = DeckInfo.DefaultRegulationId;
             if (SoloRegulationId != 0)
             {
@@ -225,12 +224,12 @@ namespace YgoMaster
             {
                 regulationId = request.Player.SoloRegulationIdOverride;
             }
-            solo["deck_info"] = new Dictionary<string, object>()
-            {
-                { "deck_id", deck != null ? deck.Id : 0 },
-                { "valid", deck != null ? DisableDeckValidation || deck.IsValid(request.Player, regulationId, Regulation) : false },
-                { "possession", true }//request.Player.Duel.IsMyDeck }
-            };
+            Dictionary<string, object> solo = request.GetOrCreateDictionary("Solo");
+            Dictionary<string, object> deckInfoData = Utils.GetOrCreateDictionary(solo, "deck_info");
+            deckInfoData["deck_id"] = deck != null ? deck.Id : 0;
+            deckInfoData["valid"] = deck != null ? DisableDeckValidation || deck.IsValid(request.Player, regulationId, Regulation) : false;
+            deckInfoData["possession"] = true; //request.Player.Duel.IsMyDeck
+            deckInfoData["regulation"] = regulationId.ToString();
         }
 
         void WritePerPackRarities(GameServerWebRequest request, Dictionary<int, int> cardRare)
