@@ -700,48 +700,10 @@ namespace YgomGame.Room
         static IntPtr activeViewController;
         static IntPtr activeButton;
         static DuelSettingsManager duelSettingsManager = new DuelSettingsManager();
+        static PvpInjections pvpInjections = new PvpInjections();
 
-        // DuelType dropdown injected into the native PvP Room Create view (non-hacked path).
-        // pvpDuelTypeButton/pvpDuelTypeView are cleared in NotificationStackRemove to
-        // avoid stale IntPtr use after IL2CPP destroys the view.
-        static IntPtr pvpDuelTypeButton = IntPtr.Zero;
-        static IntPtr pvpDuelTypeView = IntPtr.Zero;
-        public static int PendingPvpDuelType = (int)DuelType.Normal;
-        static readonly string[] pvpDuelTypeOptions = new[] { "Normal", "Rush" };
-        // Cached setter/getter for the currentValue property -- avoids IL2CPP lookup
-        // on every selection/read.
-        static IL2Method pvpDuelTypeButtonSetter;
-        static IL2Method pvpDuelTypeButtonGetter;
-        // ActionSheet callback must be a static field, not an inline lambda -- otherwise
-        // the GC can release the delegate before Unity invokes it (crash).
-        static readonly Action<IntPtr, int> OnPvpDuelTypeSelected = OnPvpDuelTypeSelectedImpl;
-        static int DuelTypeFromOptionString(string name)
-        {
-            return string.Equals(name, "Rush", StringComparison.OrdinalIgnoreCase)
-                ? (int)DuelType.Rush
-                : (int)DuelType.Normal;
-        }
-        static void OnPvpDuelTypeSelectedImpl(IntPtr ctx, int index)
-        {
-            if (index < 0 || index >= pvpDuelTypeOptions.Length) return;
-            string chosen = pvpDuelTypeOptions[index];
-            PendingPvpDuelType = DuelTypeFromOptionString(chosen);
-            try
-            {
-                if (pvpDuelTypeButton != IntPtr.Zero && pvpDuelTypeButtonSetter != null)
-                {
-                    pvpDuelTypeButtonSetter.Invoke(pvpDuelTypeButton, new IntPtr[] { new IL2String(chosen).ptr });
-                }
-                if (pvpDuelTypeView != IntPtr.Zero)
-                {
-                    YgomSystem.UI.InfinityScroll.InfinityScrollView.UpdateData(fieldIsv.GetValue(pvpDuelTypeView).ptr);
-                }
-            }
-            catch (Exception ex)
-            {
-                Console.WriteLine("[RoomCreate] DuelType set failed: " + ex);
-            }
-        }
+        // Forwarding for callers outside this class (Room_create hook reads it).
+        public static int PendingPvpDuelType { get { return pvpInjections.PendingDuelType; } }
 
         static Dictionary<IntPtr, string[]> buttonsActionSheets = new Dictionary<IntPtr, string[]>();
 
@@ -788,8 +750,6 @@ namespace YgomGame.Room
             buttonStringInfoClass = ClassInfo.GetNestedType("ButtonStringInfo");
             buttonStringInfoCtor = buttonStringInfoClass.GetMethod(".ctor");
             buttonStringInfoCurrentValue = buttonStringInfoClass.GetProperty("currentValue");
-            pvpDuelTypeButtonSetter = buttonStringInfoCurrentValue.GetSetMethod();
-            pvpDuelTypeButtonGetter = buttonStringInfoCurrentValue.GetGetMethod();
             buttonBoolValueInfoClass = ClassInfo.GetNestedType("ButtonBoolValueInfo");
             buttonBoolValueInfoCtor = buttonBoolValueInfoClass.GetMethod(".ctor");
             buttonBoolValueInfoCurrentValue = buttonBoolValueInfoClass.GetProperty("currentValue");
@@ -803,29 +763,7 @@ namespace YgomGame.Room
             {
                 activeViewController = IntPtr.Zero;
                 hookOnCreatedView.Original.Invoke(thisPtr);
-                // Append the "Duel Type" dropdown to the native view. Initial state
-                // comes from ClientSettings.PvpDuelType; pointers are cached for cleanup
-                // in NotificationStackRemove.
-                try
-                {
-                    IntPtr existingInfos = fieldInfos.GetValue(thisPtr).ptr;
-                    if (existingInfos != IntPtr.Zero)
-                    {
-                        IL2ListExplicit infosList = new IL2ListExplicit(existingInfos, templateInfoClass);
-                        int initialType = DuelTypeFromOptionString(ClientSettings.PvpDuelType);
-                        // Action sheet: the first entry is the initial value shown on the button.
-                        string[] options = initialType == (int)DuelType.Rush
-                            ? new[] { "Rush", "Normal" }
-                            : new[] { "Normal", "Rush" };
-                        pvpDuelTypeButton = AddButtonString(infosList, "DuelType", "Duel Type", options);
-                        pvpDuelTypeView = thisPtr;
-                        PendingPvpDuelType = initialType;
-                    }
-                }
-                catch (Exception ex)
-                {
-                    Console.WriteLine("[RoomCreate] add DuelType button failed: " + ex);
-                }
+                pvpInjections.Inject(thisPtr);
                 return;
             }
             IsNextInstanceHacked = false;
@@ -852,12 +790,7 @@ namespace YgomGame.Room
                 duelSettingsManager.DuelSettingsFromUI();
                 activeViewController = IntPtr.Zero;
             }
-            // Avoid stale IntPtr after the native RoomCreate view is destroyed.
-            if (pvpDuelTypeView == thisPtr)
-            {
-                pvpDuelTypeView = IntPtr.Zero;
-                pvpDuelTypeButton = IntPtr.Zero;
-            }
+            pvpInjections.Clear(thisPtr);
         }
 
         static void SetupData(IntPtr thisPtr)
@@ -895,21 +828,7 @@ namespace YgomGame.Room
             }
             else
             {
-                try
-                {
-                    if (pvpDuelTypeButton != IntPtr.Zero && pvpDuelTypeButtonGetter != null)
-                    {
-                        IL2Object valueObj = pvpDuelTypeButtonGetter.Invoke(pvpDuelTypeButton, new IntPtr[0]);
-                        if (valueObj != null)
-                        {
-                            PendingPvpDuelType = DuelTypeFromOptionString(new IL2String(valueObj.ptr).ToString());
-                        }
-                    }
-                }
-                catch (Exception ex)
-                {
-                    Console.WriteLine("[RoomCreate] read DuelType failed: " + ex);
-                }
+                pvpInjections.ReadFromUI();
                 hookCallAPIRoomCreate.Original(thisPtr);
             }
         }
@@ -954,15 +873,9 @@ namespace YgomGame.Room
 
         static void OnClick(IntPtr buttonPtr)
         {
-            // Click on the "Duel Type" dropdown injected into the native PvP Room Create.
-            // Pointer compare first so we short-circuit without calling IsHacked.
-            if (buttonPtr == pvpDuelTypeButton && pvpDuelTypeButton != IntPtr.Zero && !IsHacked)
+            // Buttons injected into the native PvP Room Create view (non-hacked path).
+            if (!IsHacked && pvpInjections.HandleClick(buttonPtr))
             {
-                int selectedIdx = PendingPvpDuelType == (int)DuelType.Rush ? 1 : 0;
-                if (!YgomGame.Menu.ActionSheetViewController.TryOpenRadio("Duel Type", pvpDuelTypeOptions, selectedIdx, OnPvpDuelTypeSelected))
-                {
-                    YgomGame.Menu.ActionSheetViewController.Open("Duel Type", pvpDuelTypeOptions, OnPvpDuelTypeSelected);
-                }
                 return;
             }
             if (IsHacked)
@@ -1027,6 +940,122 @@ namespace YgomGame.Room
                 {
                     // Another hack... (this time when re-entering the view controller sometimes the deck name gets swapped out, so update it)
                     duelSettingsManager.UpdateDeckNames();
+                }
+            }
+        }
+
+        // Buttons appended to the *native* RoomCreate view (the non-hacked PvP path).
+        // Mirrors DuelSettingsManager's pattern (Buttons struct + HandleClick) so adding
+        // more PvP-only knobs later is a one-liner per knob. State is reset whenever the
+        // view is destroyed; Pending* fields preserve the last user choice for Room_create.
+        class PvpInjections
+        {
+            class Buttons
+            {
+                public IntPtr DuelType;
+            }
+
+            static readonly string[] duelTypeOptions = { "Normal", "Rush" };
+
+            Buttons buttons = new Buttons();
+            IntPtr viewController = IntPtr.Zero;
+            int pendingDuelType = (int)DuelType.Normal;
+            public int PendingDuelType { get { return pendingDuelType; } }
+
+            // ActionSheet callback must be a non-lambda static field -- the GC can release
+            // an inline lambda before Unity invokes it (crash).
+            static readonly Action<IntPtr, int> OnDuelTypeSelected = OnDuelTypeSelectedImpl;
+
+            static int DuelTypeFromOptionString(string name)
+            {
+                return string.Equals(name, "Rush", StringComparison.OrdinalIgnoreCase)
+                    ? (int)DuelType.Rush
+                    : (int)DuelType.Normal;
+            }
+
+            public void Inject(IntPtr thisPtr)
+            {
+                try
+                {
+                    IntPtr existingInfos = fieldInfos.GetValue(thisPtr).ptr;
+                    if (existingInfos == IntPtr.Zero) return;
+                    IL2ListExplicit infosList = new IL2ListExplicit(existingInfos, templateInfoClass);
+                    int initialType = DuelTypeFromOptionString(ClientSettings.PvpDuelType);
+                    // Action sheet's first entry is the initial value shown on the button.
+                    string[] options = initialType == (int)DuelType.Rush
+                        ? new[] { "Rush", "Normal" }
+                        : new[] { "Normal", "Rush" };
+                    buttons.DuelType = AddButtonString(infosList, "DuelType", "Duel Type", options);
+                    viewController = thisPtr;
+                    pendingDuelType = initialType;
+                }
+                catch (Exception ex)
+                {
+                    Console.WriteLine("[RoomCreate] add DuelType button failed: " + ex);
+                }
+            }
+
+            public void Clear(IntPtr thisPtr)
+            {
+                if (viewController == thisPtr)
+                {
+                    viewController = IntPtr.Zero;
+                    buttons = new Buttons();
+                }
+            }
+
+            public bool HandleClick(IntPtr buttonPtr)
+            {
+                if (buttonPtr != IntPtr.Zero && buttonPtr == buttons.DuelType)
+                {
+                    int selectedIdx = PendingDuelType == (int)DuelType.Rush ? 1 : 0;
+                    if (!YgomGame.Menu.ActionSheetViewController.TryOpenRadio("Duel Type", duelTypeOptions, selectedIdx, OnDuelTypeSelected))
+                    {
+                        YgomGame.Menu.ActionSheetViewController.Open("Duel Type", duelTypeOptions, OnDuelTypeSelected);
+                    }
+                    return true;
+                }
+                return false;
+            }
+
+            // Re-reads the current button value into Pending* before the API submission --
+            // covers the case where Room_create fires while the view is still alive.
+            public void ReadFromUI()
+            {
+                if (buttons.DuelType == IntPtr.Zero) return;
+                try
+                {
+                    string current = new IL2String(buttonInfoBaseValueText.Invoke(buttons.DuelType).ptr).ToString();
+                    pendingDuelType = DuelTypeFromOptionString(current);
+                }
+                catch (Exception ex)
+                {
+                    Console.WriteLine("[RoomCreate] read DuelType failed: " + ex);
+                }
+            }
+
+            static void OnDuelTypeSelectedImpl(IntPtr ctx, int index)
+            {
+                if (index < 0 || index >= duelTypeOptions.Length) return;
+                string chosen = duelTypeOptions[index];
+                pvpInjections.pendingDuelType = DuelTypeFromOptionString(chosen);
+                try
+                {
+                    if (pvpInjections.buttons.DuelType != IntPtr.Zero)
+                    {
+                        buttonStringInfoCurrentValue.GetSetMethod().Invoke(
+                            pvpInjections.buttons.DuelType,
+                            new IntPtr[] { new IL2String(chosen).ptr });
+                    }
+                    if (pvpInjections.viewController != IntPtr.Zero)
+                    {
+                        YgomSystem.UI.InfinityScroll.InfinityScrollView.UpdateData(
+                            fieldIsv.GetValue(pvpInjections.viewController).ptr);
+                    }
+                }
+                catch (Exception ex)
+                {
+                    Console.WriteLine("[RoomCreate] DuelType set failed: " + ex);
                 }
             }
         }
