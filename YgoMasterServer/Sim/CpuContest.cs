@@ -212,9 +212,9 @@ namespace YgoMaster
                                 { "rating", (int)stats.Rating },
                                 { "deck", Path.GetFileName(stats.Deck.File) },
                             });
-                            File.Copy(stats.Deck.File, Path.Combine(decksByRatingDir, ((int)stats.Rating) + " - " + Path.GetFileName(stats.Deck.File)), true);
+                            Utils.SafeFileCopy(stats.Deck.File, Path.Combine(decksByRatingDir, ((int)stats.Rating) + " - " + Path.GetFileName(stats.Deck.File)), true);
                         }
-                        File.WriteAllText(Path.Combine(DuelTypeDir, "Results.json"), MiniJSON.Json.Format(MiniJSON.Json.Serialize(statsData)));
+                        Utils.SafeWriteAllText(Path.Combine(DuelTypeDir, "Results.json"), MiniJSON.Json.Format(MiniJSON.Json.Serialize(statsData)));
                         break;
                     }
                 }
@@ -414,7 +414,7 @@ namespace YgoMaster
                 string path = GetFilePath();
                 if (File.Exists(path))
                 {
-                    Dictionary<string, object> data = MiniJSON.Json.Deserialize(File.ReadAllText(path)) as Dictionary<string, object>;
+                    Dictionary<string, object> data = MiniJSON.Json.Deserialize(Utils.SafeReadAllText(path)) as Dictionary<string, object>;
                     if (data == null)
                     {
                         return;
@@ -440,7 +440,7 @@ namespace YgoMaster
                 data["results"] = ResultsToDictionary(Results);
                 data["resultsGoFirst"] = ResultsToDictionary(GoFirstResults);
                 data["resultsGoSecond"] = ResultsToDictionary(GoSecondResults);
-                File.WriteAllText(GetFilePath(), MiniJSON.Json.Format(MiniJSON.Json.Serialize(data)));
+                Utils.SafeWriteAllText(GetFilePath(), MiniJSON.Json.Format(MiniJSON.Json.Serialize(data)));
             }
 
             void ResultsFromDictionary(Dictionary<string, object> data, Dictionary<DuelResultType, int> collection)

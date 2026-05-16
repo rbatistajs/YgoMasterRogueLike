@@ -276,7 +276,7 @@ namespace YgoMaster
             if (!File.Exists(pairHistoryPath)) return;
             try
             {
-                Dictionary<string, object> data = MiniJSON.Json.Deserialize(File.ReadAllText(pairHistoryPath)) as Dictionary<string, object>;
+                Dictionary<string, object> data = MiniJSON.Json.Deserialize(Utils.SafeReadAllText(pairHistoryPath)) as Dictionary<string, object>;
                 if (data == null) return;
                 foreach (KeyValuePair<string, object> entry in data)
                 {
@@ -346,7 +346,7 @@ namespace YgoMaster
                         {
                             data[kv.Key] = kv.Value;
                         }
-                        File.WriteAllText(pairHistoryPath, MiniJSON.Json.Format(MiniJSON.Json.Serialize(data)));
+                        Utils.SafeWriteAllText(pairHistoryPath, MiniJSON.Json.Format(MiniJSON.Json.Serialize(data)));
                     }
                     catch (Exception ex)
                     {

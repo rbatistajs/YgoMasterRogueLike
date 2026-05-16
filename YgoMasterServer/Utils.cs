@@ -102,6 +102,54 @@ namespace YgoMaster
             }
         }
 
+        /// <summary>
+        /// Run a file IO action, retrying on transient IOExceptions (the classic
+        /// Windows "user-mapped section open" / "file in use" cases that happen
+        /// when antivirus or another process briefly holds the handle).
+        /// </summary>
+        public static void RetryIO(Action action, int attempts = 6, int initialDelayMs = 80,
+                                    string context = null)
+        {
+            int delay = initialDelayMs;
+            for (int attempt = 1; ; attempt++)
+            {
+                try
+                {
+                    action();
+                    return;
+                }
+                catch (IOException ex)
+                {
+                    if (attempt >= attempts)
+                    {
+                        LogWarning("RetryIO gave up after " + attempt + " attempts"
+                                    + (string.IsNullOrEmpty(context) ? "" : " (" + context + ")")
+                                    + ": " + ex.Message);
+                        throw;
+                    }
+                    System.Threading.Thread.Sleep(delay);
+                    delay = Math.Min(delay * 2, 1000);  // capped exponential backoff
+                }
+            }
+        }
+
+        public static string SafeReadAllText(string path)
+        {
+            string result = null;
+            RetryIO(() => result = File.ReadAllText(path), context: "read " + path);
+            return result;
+        }
+
+        public static void SafeWriteAllText(string path, string content)
+        {
+            RetryIO(() => File.WriteAllText(path, content), context: "write " + path);
+        }
+
+        public static void SafeFileCopy(string src, string dst, bool overwrite = false)
+        {
+            RetryIO(() => File.Copy(src, dst, overwrite), context: "copy " + src + " -> " + dst);
+        }
+
         public static List<T> Shuffle<T>(Random rng, List<T> values)
         {
             List<T> array = new List<T>(values);

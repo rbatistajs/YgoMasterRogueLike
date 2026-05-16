@@ -248,7 +248,7 @@ namespace YgoMaster
 
             string filename = "cpucontest_" + seed + "_" + SanitizeName(winnerName) + "_W_vs_" + SanitizeName(loserName) + ".json";
             string filepath = Path.Combine(saveReplayDir, filename);
-            File.WriteAllText(filepath, MiniJSON.Json.Serialize(ds.ToDictionary()));
+            Utils.SafeWriteAllText(filepath, MiniJSON.Json.Serialize(ds.ToDictionary()));
             FileInfo fi = new FileInfo(filepath);
             Console.WriteLine("[Sim] ReplaySaved " + filename + " (" + (fi.Length / 1024) + "KB)");
         }
