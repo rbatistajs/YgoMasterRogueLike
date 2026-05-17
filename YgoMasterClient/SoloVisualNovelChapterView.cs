@@ -88,7 +88,15 @@ namespace YgoMasterClient
 
         static void OnCreatedView(IntPtr thisPtr)
         {
+            // Goat: reset wasApplied before Original so its initial
+            // SelectedChapter is suppressed on every new gate display.
+            SoloGateGridLayout.OnPreCreatedView(thisPtr);
+
             hookOnCreatedView.Original(thisPtr);
+
+            // Goat callouts (one Hook per method limit — piggyback here).
+            SoloGateScrollEnabler.OnCreatedView(thisPtr);
+            SoloGateGridLayout.OnCreatedView(thisPtr);
 
             if (!loadedCharacterImages)
             {

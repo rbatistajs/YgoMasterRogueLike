@@ -68,6 +68,8 @@ namespace YgoMasterClient
             AssetHelper.Update();
             DuelEmoteHelper.Update();
             YgomGame.Tutorial.CardFlyingViewController.Update();
+            // Goat: re-apply Solo gate drag-scroll each frame.
+            SoloGateScrollEnabler.Update();
 
             if (hasActionToRun || lastActionCheck < DateTime.UtcNow - TimeSpan.FromSeconds(2))
             {

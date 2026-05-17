@@ -331,6 +331,8 @@ namespace YgoMasterClient
                 nativeTypes.Add(typeof(SoloVisualNovel));
                 nativeTypes.Add(typeof(SoloVisualNovelChapterView));
                 nativeTypes.Add(typeof(SoloDeckRegulationFilter));
+                nativeTypes.Add(typeof(SoloGateScrollEnabler));
+                nativeTypes.Add(typeof(SoloGateGridLayout));
                 nativeTypes.Add(typeof(YgomGame.Duel.DuelTutorialSetting));
                 nativeTypes.Add(typeof(YgomGame.Tutorial.CardFlyingViewController));
                 nativeTypes.Add(typeof(YgomGame.Utility.ItemUtil));
