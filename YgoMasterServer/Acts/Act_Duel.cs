@@ -12,6 +12,8 @@ namespace YgoMaster
     {
         DuelSettings GetSoloDuelSettings(Player player, int chapterId)
         {
+            DuelSettings runtimeDs = RuntimeGateGenerator.TryGetSoloDuel(player, chapterId);
+            if (runtimeDs != null) return runtimeDs;
             DuelSettings duelSettings;
             ChapterStatus chapterStatus;
             if (SoloDuels.TryGetValue(chapterId, out duelSettings) &&

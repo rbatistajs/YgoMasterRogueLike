@@ -107,9 +107,13 @@
     <Compile Include="WikiDump\HtmlAgilityPack.Merged.cs" />
     <Compile Include="Sim\DuelSimulator.DllContent.cs" />
     <Compile Include="DuelSettings.cs" />
+    <Compile Include="Goat\DeckPoolLoader.cs" />
     <Compile Include="Goat\DuelDllProps.cs" />
     <Compile Include="Goat\DuelSettings.Goat.cs" />
     <Compile Include="Goat\GameServer.Goat.cs" />
+    <Compile Include="Goat\RuntimeGateConfig.cs" />
+    <Compile Include="Goat\RuntimeGateGenerator.cs" />
+    <Compile Include="Goat\RuntimeGateStorage.cs" />
     <Compile Include="Goat\RuntimeRandomResolver.cs" />
     <Compile Include="Sim\DuelSimulator.cs" />
     <Compile Include="Sim\DuelSimulator.DllEngine.cs" />

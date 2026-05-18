@@ -12,7 +12,18 @@ namespace YgoMaster
         void InitGoat()
         {
             RuntimeRandomResolver.Init(dataDirectory, Regulation);
+            RuntimeGateGenerator.Init(dataDirectory);
             HandleGoatArgs();
+        }
+
+        // Goat: bridge for Act_SoloInfo. Wraps SoloData with per-player
+        // runtime-generated chapters (clone-on-write; vanilla flow is
+        // pass-through). Returns the dict the response should embed.
+        internal Dictionary<string, object> WrapSoloDataForRuntimeGates(
+            Dictionary<string, object> soloData, Player player)
+        {
+            return RuntimeGateGenerator.WrapSoloData(
+                soloData, player, GetPlayerDirectory(player));
         }
 
         // Goat-only CLI args, dispatched after the resolver is initialized

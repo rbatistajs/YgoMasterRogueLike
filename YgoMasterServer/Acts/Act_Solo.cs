@@ -835,7 +835,7 @@ namespace YgoMaster
             }
             request.Response["Master"] = new Dictionary<string, object>()
             {
-                { "Solo", SoloData }
+                { "Solo", WrapSoloDataForRuntimeGates(SoloData, request.Player) }
             };
             request.GetOrCreateDictionary("Solo")["cleared"] = request.Player.SoloChaptersToDictionary();
             WriteSoloLastPlayDate(request);
