@@ -693,6 +693,14 @@ namespace YgoMaster
             LoadStructureDecks();
             LoadCardCategory();
             LoadShop();
+            // Goat: bake-on-boot das gates não-runtime cujo hash mudou
+            // OU que não estão em Solo.json. Roda ANTES de LoadSolo pra
+            // que as mudanças apareçam neste mesmo boot. Self-healing —
+            // qualquer edição manual em GridGates.json propaga sem
+            // precisar de comando explícito. (ItemID já foi carregado
+            // mais cedo em LoadSettings, então CosmeticsPicker/RewardPicker
+            // estão prontos.)
+            Builder.GridGateBaker.BakeMissing(dataDirectory);
             LoadSolo();
 
             DuelRewards = new DuelRewardInfos();

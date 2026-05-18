@@ -45,6 +45,15 @@ namespace YgoMaster
 
             for (int i = 0; i < args.Length; i++)
             {
+                // Goat: CLI pra GridGates.json — read-only por enquanto
+                // (`list` / `preview`). Substitui o builder Python aos
+                // poucos; ver Goat/Cli/GridGateCli.cs.
+                if (args[i].ToLowerInvariant() == "--grid-gate")
+                {
+                    string[] sub = new string[args.Length - i - 1];
+                    Array.Copy(args, i + 1, sub, 0, sub.Length);
+                    return Cli.GridGateCli.Run(sub);
+                }
                 if (args[i].ToLowerInvariant() == "--pvp" && i < args.Length - 1)
                 {
                     Pvp pvp = new Pvp();

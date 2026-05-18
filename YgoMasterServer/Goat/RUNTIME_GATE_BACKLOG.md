@@ -49,24 +49,47 @@ group by area.
 - [ ] Per-chapter overrides (post-MVP — currently every duel-type
       chapter shares the same template; only boss differs).
 
-### Layout variety — shipped (via Python precompute)
+### Layout variety — shipped (C# generators)
 - [x] Python precomputes the layout for any format
       (hourglass / dungeon / tower / manual) and stashes chapter dicts +
-      per-chapter metadata on the GridGates entry under
-      `runtime_chapters` / `runtime_chapter_meta`.
-- [x] Server iterates precomputed chapters, picks per-player decks +
+      per-chapter metadata. *(Superseded — layout now generated in C#
+      per-call; Python keeps the helpers only for the local
+      `--resolve-chapter` preview path.)*
+- [x] **Format generators ported to C#** under
+      `YgoMaster/Goat/Layout/`: HourglassGenerator, DungeonGenerator,
+      TowerGenerator, ManualGenerator + shared LayoutNode / LayoutPresets
+      / PostProcessors (assign_types / setup_progression / assign_levels
+      / assign_levels_by_curve). LayoutGenerator.Generate is the entry
+      point — RuntimeGateGenerator.BuildLayout calls it per (player,
+      regen). Pool field on GridGates entries is gone.
+- [x] Server iterates generated chapters, picks per-player decks +
       attaches type-appropriate modifier template.
-- [x] Falls back to built-in linear default when entry has no
-      `runtime_chapters`.
-- [x] **Layout variance across regens**: Python emits a pool of 8
-      layout variants per gate (different seeds). Server picks one
-      per (player, regen) at generation, recording the picked index
-      on `GeneratedGate.LayoutVariantIndex`. Pool size and "next
-      variant" strategy (random vs round-robin) tunable later.
-- [ ] **True per-player unique layouts**: still bounded by pool
-      size — same N players see the same N maps eventually. For
-      arbitrarily unique maps, port the format generators to C# (or
-      shell out to Python on demand).
+- [x] Falls back to built-in linear chain when format isn't one of
+      hourglass / dungeon / tower / manual (e.g. `linear`).
+- [x] **True per-player unique layouts**: every (player, regen) call
+      builds a brand-new layout with a fresh seed. No pool, no
+      duplicates across players (Random source is
+      `DateTime.UtcNow.Ticks`).
+
+#### Notes / follow-ups on the C# port
+- [ ] `_precompute_runtime_layout` in `build_grid_gate_procedural.py`
+      is now legacy — kept for the GUI `--resolve-chapter` preview
+      path but the runtime emit no longer calls it. Confirm preview
+      still works after this change, otherwise migrate the preview to
+      shell out to C# (or drop preview entirely).
+- [ ] Random sequences differ between Python's Mersenne Twister and
+      C#'s `System.Random` for the same seed. We don't claim parity —
+      same params produce *similar-shape* maps but exact placement
+      differs. Document this if anyone tries to repro a Python preview
+      against a server gen.
+- [ ] Dungeon generator uses Box-Muller for gauss; Python uses
+      `random.gauss`. Different sequence but same distribution shape;
+      noted in code.
+- [ ] `force_special` / `modifiers_override` / `gems_override` /
+      `card_rewards_override` from the Python `Node` are NOT ported —
+      they're only relevant to baked emit. If we ever want per-cell
+      overrides honored at runtime, expand `LayoutNode` + read them
+      from manual cells.
 
 ### Tier / difficulty scaling
 - [ ] `tier_range` (e.g. `[3, 6]`) drives per-chapter deck-pool tier

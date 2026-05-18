@@ -97,6 +97,7 @@ namespace YgoMasterClient
             // Goat callouts (one Hook per method limit — piggyback here).
             SoloGateScrollEnabler.OnCreatedView(thisPtr);
             SoloGateGridLayout.OnCreatedView(thisPtr);
+            SoloChapterCardImage.OnCreatedView(thisPtr);
 
             if (!loadedCharacterImages)
             {

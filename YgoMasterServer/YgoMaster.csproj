@@ -107,10 +107,30 @@
     <Compile Include="WikiDump\HtmlAgilityPack.Merged.cs" />
     <Compile Include="Sim\DuelSimulator.DllContent.cs" />
     <Compile Include="DuelSettings.cs" />
+    <Compile Include="Goat\Builder\BakedFilePatcher.cs" />
+    <Compile Include="Goat\Builder\EntryHasher.cs" />
+    <Compile Include="Goat\Builder\GridGateBaker.cs" />
+    <Compile Include="Goat\Builder\SoloDuelBuilder.cs" />
+    <Compile Include="Goat\Builder\SoloJsonPatcher.cs" />
+    <Compile Include="Goat\Builder\SoloRewards.cs" />
+    <Compile Include="Goat\Cli\GridGateCli.cs" />
+    <Compile Include="Goat\Cosmetics\CosmeticsPicker.cs" />
     <Compile Include="Goat\DeckPoolLoader.cs" />
+    <Compile Include="Goat\Modifiers\ModifierApplier.cs" />
+    <Compile Include="Goat\Rewards\RewardConfig.cs" />
+    <Compile Include="Goat\Rewards\RewardPicker.cs" />
     <Compile Include="Goat\DuelDllProps.cs" />
     <Compile Include="Goat\DuelSettings.Goat.cs" />
     <Compile Include="Goat\GameServer.Goat.cs" />
+    <Compile Include="Goat\Layout\DungeonGenerator.cs" />
+    <Compile Include="Goat\Layout\GenerationContext.cs" />
+    <Compile Include="Goat\Layout\HourglassGenerator.cs" />
+    <Compile Include="Goat\Layout\LayoutGenerator.cs" />
+    <Compile Include="Goat\Layout\LayoutNode.cs" />
+    <Compile Include="Goat\Layout\LayoutPresets.cs" />
+    <Compile Include="Goat\Layout\ManualGenerator.cs" />
+    <Compile Include="Goat\Layout\PostProcessors.cs" />
+    <Compile Include="Goat\Layout\TowerGenerator.cs" />
     <Compile Include="Goat\ResponseDebugDumper.cs" />
     <Compile Include="Goat\RuntimeGateConfig.cs" />
     <Compile Include="Goat\RuntimeGateGenerator.cs" />
@@ -152,11 +172,23 @@
   </ItemGroup>
   <ItemGroup />
   <Import Project="$(MSBuildToolsPath)\Microsoft.CSharp.targets" />
-  <!-- To modify your build process, add your task inside one of the targets below and uncomment it. 
-       Other similar extension points exist, see Microsoft.Common.targets.
-  <Target Name="BeforeBuild">
+
+  <!-- Goat dev convenience: depois de buildar, copia YgoMaster.exe +
+       .pdb pra pasta do install (onde o jogo roda). Sem isso, o servidor
+       fica usando o exe antigo até copiar à mão.
+
+       O caminho é hardcoded pro setup local — se Exists() retornar
+       false (CI, outra máquina, etc.) o target vira no-op. Pra mudar
+       de máquina, ajusta GoatInstallDir abaixo. -->
+  <PropertyGroup>
+    <GoatInstallDir>D:\SteamLibrary\steamapps\common\Yu-Gi-Oh!  Master Duel\YgoMasterLE - Goat</GoatInstallDir>
+  </PropertyGroup>
+  <Target Name="CopyToGoatInstall" AfterTargets="Build"
+          Condition="Exists('$(GoatInstallDir)')">
+    <Copy SourceFiles="$(OutputPath)YgoMaster.exe;$(OutputPath)YgoMaster.pdb"
+          DestinationFolder="$(GoatInstallDir)"
+          SkipUnchangedFiles="true" />
+    <Message Text="[Goat] Copied YgoMaster.exe + .pdb -&gt; $(GoatInstallDir)"
+             Importance="high" />
   </Target>
-  <Target Name="AfterBuild">
-  </Target>
-  -->
 </Project>

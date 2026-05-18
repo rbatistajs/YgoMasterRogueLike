@@ -1,6 +1,8 @@
 using System;
 using System.Collections.Generic;
 using System.IO;
+using YgoMaster.Builder;
+using YgoMaster.Rewards;
 
 namespace YgoMaster
 {
@@ -8,42 +10,49 @@ namespace YgoMaster
     // file the Python builder writes when the user creates/edits a gate
     // through `build_grid_gate_procedural.py` / the gate editor GUI.
     //
-    // The C# server picks up entries with `runtime: true` and regenerates
-    // those gates per-player at duel start. Non-runtime gates ignored
+    // The C# server picks up entries with `runtime: true` and generates
+    // those gates per-player at duel start using the layout generators
+    // under YgoMaster.Layout (HourglassGenerator / DungeonGenerator /
+    // TowerGenerator / ManualGenerator). Non-runtime gates ignored
     // (their baked SoloDuels/*.json drive the duel like before).
     //
-    // Fields used today (see GridGates.json for the full shape):
+    // Fields used today:
     //   gate_id          int    — Solo.json gate key
     //   duel_type        string — "Normal" | "Rush" (drives deck pool default)
     //   format           string — "linear" | "hourglass" | "dungeon" | "tower"
     //   runtime          bool   — gate registered for per-player regen
-    //   name / blurb     string — already in IDS_SOLO; unused server-side
-    //   format_params    dict   — layout-specific knobs
-    //   generic_params   dict   — chapter counts, levels, modifier defaults
-    //
-    // For MVP the server only honors a small subset (chapter_count derived
-    // from generic_params; deck pool from duel_type). Richer layout / tier
-    // scaling lives in RUNTIME_GATE_BACKLOG.md.
+    //   manual           bool   — `manual_cells` is authoritative; format params ignored
+    //   manual_cells     list   — verbatim cell list when `manual: true`
+    //   manual_boss_pos  "x,y"  — explicit boss anchor for manual
+    //   format_params    dict   — layout-specific knobs (size/branching, room_count, ...)
+    //   generic_params   dict   — elite/lock/reward/treasure counts + levels + curve
+    //   runtime_templates dict  — modifier templates pre-baked by Python
     class RuntimeGateConfig
     {
         public int GateId;
         public string DuelType;
         public string Format;
         public string RegulationName;
+        public bool Manual;
         public Dictionary<string, object> FormatParams;
         public Dictionary<string, object> GenericParams;
-        // Pre-computed modifier templates per chapter type
-        // ("boss"/"duel"/"elite"/...). Each value is a duel-dict fragment
-        // with cmds / random_specs / life / hnum that the server merges
-        // into the generated DuelSettings. Python (`_modifiers.apply_modifiers`)
-        // computes these at gen time so the server doesn't need to know
-        // how to encode markers/random_specs.
-        public Dictionary<string, Dictionary<string, object>> RuntimeTemplates;
-        // Pool of pre-computed layouts. Each entry is a fully-built layout
-        // (chapters / chapter_meta / boss_chapter_id / locks) from one
-        // seed variant. Server picks one per (player, regen) to give
-        // session-to-session variety. Empty/null → use the linear default.
-        public List<RuntimeLayoutVariant> RuntimeLayoutPool;
+        public List<object> ManualCells;
+        public string ManualBossPos;
+        // Cosmetics: "vanilla" (default) ou "random". Random sorteia
+        // mat/sleeve/icon/etc por ItemID.Values em cada chapter — visual
+        // único por duelo. Vanilla usa o baseline do chapter 40001.
+        public SoloDuelBuilder.CosmeticMode CosmeticMode;
+        // Drop chances + category weights per chapter type. Lê do bloco
+        // `rewards` da entry. Default zerado (não dropa nada).
+        public RewardConfig Rewards;
+        // Modifier defaults per chapter type ("boss"/"duel"/"elite"/...).
+        // Cada valor é um modifier dict alto-nível (fieldSpell/monsters/
+        // spellTraps/hand/extraLife/extraHand). ModifierApplier compila
+        // pra cmds + random_specs + life + hnum no momento do bake/runtime.
+        //
+        // Lê de `generic_params.modifier_defaults` (mesma source que o
+        // baker baked usa).
+        public Dictionary<string, Dictionary<string, object>> ModifierDefaults;
 
         // Loads every entry from GridGates.json filtered to `runtime: true`.
         // Returns a dict keyed by gate id — missing/malformed file → empty.
@@ -75,23 +84,26 @@ namespace YgoMaster
                     DuelType       = duelType,
                     Format         = Utils.GetValue<string>(entry, "format") ?? "linear",
                     RegulationName = duelType == "Rush" ? "Rush Duel" : "Goat Format",
+                    Manual         = Utils.GetValue<bool>(entry, "manual"),
                     FormatParams   = Utils.GetValue<Dictionary<string, object>>(entry, "format_params"),
                     GenericParams  = Utils.GetValue<Dictionary<string, object>>(entry, "generic_params"),
-                    RuntimeTemplates  = ParseNestedDict(entry, "runtime_templates"),
-                    RuntimeLayoutPool = ParseLayoutPool(entry),
+                    ManualCells    = Utils.GetValue<List<object>>(entry, "manual_cells"),
+                    ManualBossPos  = Utils.GetValue<string>(entry, "manual_boss_pos"),
+                    ModifierDefaults = ParseModifierDefaults(entry),
+                    CosmeticMode   = ParseCosmeticMode(entry),
+                    Rewards        = RewardConfig.Parse(entry),
                 };
             }
             return result;
         }
 
-        public int ChapterCount
+        // Fallback chapter count when the format isn't supported by the
+        // C# generators (e.g. `linear`). The runtime generator pads a
+        // simple vertical chain in that case.
+        public int FallbackChapterCount
         {
             get
             {
-                // MVP: pull from generic_params.duel_count if present, else 10.
-                // The full Python pipeline derives count from layout params
-                // (trunk_length / fan_count / etc.) — porting that to C# is
-                // in the backlog.
                 if (GenericParams != null)
                 {
                     int n = Utils.GetValue<int>(GenericParams, "duel_count");
@@ -103,7 +115,7 @@ namespace YgoMaster
 
         public int ChapterIdBase => GateId * 10000 + 1;
 
-        public int BossChapterId => ChapterIdBase + ChapterCount - 1;
+        public int FallbackBossChapterId => ChapterIdBase + FallbackChapterCount - 1;
 
         public string DeckPool
         {
@@ -116,36 +128,42 @@ namespace YgoMaster
             }
         }
 
-        // Picks the modifier template for a chapter type ("boss" / "duel"
-        // / "elite" / ...). Falls back to "duel" if the specific type
-        // isn't configured. Returns null if no templates registered.
-        public Dictionary<string, object> TemplateFor(string chapterType)
+        // Pega o modifier dict alto-nível pra um chapter type
+        // ("boss"/"duel"/"elite"/...). Fallback pra "duel" se o type
+        // específico não existir. Null se não houver modifier_defaults.
+        // O caller (BuildDuelDict) passa pro ModifierApplier.ApplyFullPipeline.
+        public Dictionary<string, object> ModifierFor(string chapterType)
         {
-            if (RuntimeTemplates == null || RuntimeTemplates.Count == 0) return null;
-            Dictionary<string, object> tpl;
-            if (RuntimeTemplates.TryGetValue(chapterType, out tpl)) return tpl;
-            if (RuntimeTemplates.TryGetValue("duel",       out tpl)) return tpl;
+            if (ModifierDefaults == null || ModifierDefaults.Count == 0) return null;
+            Dictionary<string, object> m;
+            if (ModifierDefaults.TryGetValue(chapterType, out m)) return m;
+            if (ModifierDefaults.TryGetValue("duel",       out m)) return m;
             return null;
         }
 
-        // Picks a layout from the pool. `variantIndex` wraps modulo the
-        // pool size so callers can pass a monotonically increasing regen
-        // counter without bothering with bounds.
-        public RuntimeLayoutVariant LayoutVariant(int variantIndex)
+        // Lê `cosmetic_mode` da entry (string). Default = vanilla.
+        // Aceita "random" ou "vanilla" (case-insensitive).
+        static SoloDuelBuilder.CosmeticMode ParseCosmeticMode(Dictionary<string, object> entry)
         {
-            if (RuntimeLayoutPool == null || RuntimeLayoutPool.Count == 0) return null;
-            int n = RuntimeLayoutPool.Count;
-            int idx = ((variantIndex % n) + n) % n;
-            return RuntimeLayoutPool[idx];
+            string mode = Utils.GetValue<string>(entry, "cosmetic_mode");
+            if (!string.IsNullOrEmpty(mode)
+                && string.Equals(mode, "random", StringComparison.OrdinalIgnoreCase))
+            {
+                return SoloDuelBuilder.CosmeticMode.Random;
+            }
+            return SoloDuelBuilder.CosmeticMode.Vanilla;
         }
 
-        // Helper: convert `Dictionary<string, object>` whose values are
-        // themselves dicts (common shape for nested runtime tables).
-        static Dictionary<string, Dictionary<string, object>> ParseNestedDict(
-            Dictionary<string, object> entry, string key)
+        // Lê `generic_params.modifier_defaults` → {chapter_type: modifier_dict}.
+        // Vazio/null se não houver. Mesmo shape que o GridGateBaker usa.
+        static Dictionary<string, Dictionary<string, object>> ParseModifierDefaults(
+            Dictionary<string, object> entry)
         {
+            Dictionary<string, object> gp =
+                Utils.GetValue<Dictionary<string, object>>(entry, "generic_params");
+            if (gp == null) return null;
             Dictionary<string, object> raw =
-                Utils.GetValue<Dictionary<string, object>>(entry, key);
+                Utils.GetValue<Dictionary<string, object>>(gp, "modifier_defaults");
             if (raw == null) return null;
             Dictionary<string, Dictionary<string, object>> result =
                 new Dictionary<string, Dictionary<string, object>>();
@@ -155,55 +173,6 @@ namespace YgoMaster
                 if (v != null) result[kv.Key] = v;
             }
             return result;
-        }
-
-        static List<RuntimeLayoutVariant> ParseLayoutPool(Dictionary<string, object> entry)
-        {
-            List<object> raw = Utils.GetValue<List<object>>(entry, "runtime_layout_pool");
-            if (raw == null || raw.Count == 0) return null;
-            List<RuntimeLayoutVariant> pool = new List<RuntimeLayoutVariant>();
-            foreach (object o in raw)
-            {
-                Dictionary<string, object> v = o as Dictionary<string, object>;
-                if (v == null) continue;
-                RuntimeLayoutVariant variant = new RuntimeLayoutVariant
-                {
-                    Chapters       = ParseNestedDict(v, "chapters"),
-                    ChapterMeta    = ParseNestedDict(v, "chapter_meta"),
-                    BossChapterId  = Utils.GetValue<int>(v, "boss_chapter_id"),
-                };
-                if (variant.Chapters != null && variant.Chapters.Count > 0)
-                {
-                    pool.Add(variant);
-                }
-            }
-            return pool.Count > 0 ? pool : null;
-        }
-    }
-
-    // One layout variant from the pool — fully-baked chapter dicts +
-    // per-chapter metadata + boss id. Each gate ships several (different
-    // seeds) so per-player regens get distinct maps.
-    class RuntimeLayoutVariant
-    {
-        public Dictionary<string, Dictionary<string, object>> Chapters;
-        public Dictionary<string, Dictionary<string, object>> ChapterMeta;
-        public int BossChapterId;
-
-        public string GetChapterType(int chapterId)
-        {
-            if (ChapterMeta == null) return "duel";
-            Dictionary<string, object> meta;
-            if (!ChapterMeta.TryGetValue(chapterId.ToString(), out meta)) return "duel";
-            return Utils.GetValue<string>(meta, "type") ?? "duel";
-        }
-
-        public int GetChapterLevel(int chapterId)
-        {
-            if (ChapterMeta == null) return 3;
-            Dictionary<string, object> meta;
-            if (!ChapterMeta.TryGetValue(chapterId.ToString(), out meta)) return 3;
-            return Utils.GetValue<int>(meta, "level");
         }
     }
 }

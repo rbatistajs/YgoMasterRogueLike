@@ -42,7 +42,27 @@ namespace YgoMaster
                     Chapters       = new Dictionary<int, Dictionary<string, object>>(),
                     SoloDuels      = new Dictionary<int, DuelSettings>(),
                     SoloDuelDicts  = new Dictionary<int, Dictionary<string, object>>(),
+                    ItemDrops      = new Dictionary<int, int[]>(),
                 };
+                Dictionary<string, object> drops = Utils.GetValue<Dictionary<string, object>>(doc, "item_drops");
+                if (drops != null)
+                {
+                    foreach (KeyValuePair<string, object> kv in drops)
+                    {
+                        int cid; if (!int.TryParse(kv.Key, out cid)) continue;
+                        List<object> pair = kv.Value as List<object>;
+                        if (pair == null || pair.Count != 2) continue;
+                        try
+                        {
+                            gate.ItemDrops[cid] = new[]
+                            {
+                                Convert.ToInt32(pair[0]),
+                                Convert.ToInt32(pair[1]),
+                            };
+                        }
+                        catch { }
+                    }
+                }
 
                 Dictionary<string, object> chapters = Utils.GetValue<Dictionary<string, object>>(doc, "chapters");
                 if (chapters != null)
@@ -107,6 +127,15 @@ namespace YgoMaster
                 { "chapters",        chapters },
                 { "solo_duels",      duels },
             };
+            if (gate.ItemDrops != null && gate.ItemDrops.Count > 0)
+            {
+                Dictionary<string, object> drops = new Dictionary<string, object>();
+                foreach (KeyValuePair<int, int[]> kv in gate.ItemDrops)
+                {
+                    drops[kv.Key.ToString()] = new List<object> { kv.Value[0], kv.Value[1] };
+                }
+                doc["item_drops"] = drops;
+            }
             File.WriteAllText(path, MiniJSON.Json.Serialize(doc));
         }
 
@@ -133,14 +162,14 @@ namespace YgoMaster
         public long Seed;
         public long GeneratedAt;
         public int BossChapterId;
-        // Index into RuntimeGateConfig.RuntimeLayoutPool — recorded so the
-        // saved per-player file is self-describing and the next regen
-        // can pick a *different* variant rather than risking the same.
-        public int LayoutVariantIndex;
         public Dictionary<int, Dictionary<string, object>> Chapters;
         public Dictionary<int, DuelSettings> SoloDuels;
         // Raw duel dicts kept alongside the parsed DuelSettings for
         // round-trip-free persistence (see Save).
         public Dictionary<int, Dictionary<string, object>> SoloDuelDicts;
+        // chapterId → (rewardCategoryId, itemId). Sorteado uma vez por
+        // regen via RewardPicker; salvo em disco pra ficar estável até o
+        // próximo regen (player abre o menu N vezes, drop é o mesmo).
+        public Dictionary<int, int[]> ItemDrops;
     }
 }
