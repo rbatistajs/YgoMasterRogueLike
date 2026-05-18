@@ -12,7 +12,7 @@ namespace YgoMaster
     }
 
     // TODO: Maybe just change this code to be Dictionary<string, object> rather than listing all entries (but keep Deck)
-    class DuelSettings
+    partial class DuelSettings
     {
         public static string DefaultNamePlayer = "Duelist";
         public static string DefaultNameCPU = "CPU";

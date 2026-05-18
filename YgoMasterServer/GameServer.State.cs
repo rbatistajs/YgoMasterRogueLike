@@ -2973,6 +2973,7 @@ namespace YgoMaster
                 }
             }
             LoadSoloDuels();
+            InitGoat();
         }
 
         void LoadSoloDuels()

@@ -165,6 +165,7 @@ namespace YgoMaster
                 duelSettings.SetP1ItemValue(duel.IsMyDeck, ItemID.Category.ICON, player.IconId);
                 duelSettings.SetP1ItemValue(duel.IsMyDeck, ItemID.Category.ICON_FRAME, player.IconFrameId);
                 duelSettings.SetP1ItemValue(duel.IsMyDeck, ItemID.Category.WALLPAPER, player.Wallpaper);
+                RuntimeRandomResolver.OnSoloDuelStart(duelSettings, player);
             }
             return duelSettings;
         }
