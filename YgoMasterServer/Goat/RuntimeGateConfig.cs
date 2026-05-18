@@ -39,20 +39,11 @@ namespace YgoMaster
         // computes these at gen time so the server doesn't need to know
         // how to encode markers/random_specs.
         public Dictionary<string, Dictionary<string, object>> RuntimeTemplates;
-        // Pre-computed chapter dicts from the gate's format generator
-        // (hourglass / dungeon / tower / manual). Keyed by chapter id
-        // (string). When present, server uses these as-is for the Solo.json
-        // injection — chapter count / layout / parent_chapter / grid x/y
-        // all come from Python. When absent (unknown format), server falls
-        // back to its built-in linear default.
-        public Dictionary<string, Dictionary<string, object>> RuntimeChapters;
-        // Per-chapter metadata the server needs to drive its own logic:
-        //   { "200005": { "type": "elite", "level": 3 }, ... }
-        // Drives deck-pool tier selection + template selection.
-        public Dictionary<string, Dictionary<string, object>> RuntimeChapterMeta;
-        // Boss chapter id (set in concert with RuntimeChapters). 0 when
-        // we fall back to linear default.
-        public int RuntimeBossChapterId;
+        // Pool of pre-computed layouts. Each entry is a fully-built layout
+        // (chapters / chapter_meta / boss_chapter_id / locks) from one
+        // seed variant. Server picks one per (player, regen) to give
+        // session-to-session variety. Empty/null → use the linear default.
+        public List<RuntimeLayoutVariant> RuntimeLayoutPool;
 
         // Loads every entry from GridGates.json filtered to `runtime: true`.
         // Returns a dict keyed by gate id — missing/malformed file → empty.
@@ -86,10 +77,8 @@ namespace YgoMaster
                     RegulationName = duelType == "Rush" ? "Rush Duel" : "Goat Format",
                     FormatParams   = Utils.GetValue<Dictionary<string, object>>(entry, "format_params"),
                     GenericParams  = Utils.GetValue<Dictionary<string, object>>(entry, "generic_params"),
-                    RuntimeTemplates    = ParseNestedDict(entry, "runtime_templates"),
-                    RuntimeChapters     = ParseNestedDict(entry, "runtime_chapters"),
-                    RuntimeChapterMeta  = ParseNestedDict(entry, "runtime_chapter_meta"),
-                    RuntimeBossChapterId = Utils.GetValue<int>(entry, "runtime_boss_chapter_id"),
+                    RuntimeTemplates  = ParseNestedDict(entry, "runtime_templates"),
+                    RuntimeLayoutPool = ParseLayoutPool(entry),
                 };
             }
             return result;
@@ -139,20 +128,15 @@ namespace YgoMaster
             return null;
         }
 
-        public string GetChapterType(int chapterId)
+        // Picks a layout from the pool. `variantIndex` wraps modulo the
+        // pool size so callers can pass a monotonically increasing regen
+        // counter without bothering with bounds.
+        public RuntimeLayoutVariant LayoutVariant(int variantIndex)
         {
-            if (RuntimeChapterMeta == null) return "duel";
-            Dictionary<string, object> meta;
-            if (!RuntimeChapterMeta.TryGetValue(chapterId.ToString(), out meta)) return "duel";
-            return Utils.GetValue<string>(meta, "type") ?? "duel";
-        }
-
-        public int GetChapterLevel(int chapterId)
-        {
-            if (RuntimeChapterMeta == null) return 3;
-            Dictionary<string, object> meta;
-            if (!RuntimeChapterMeta.TryGetValue(chapterId.ToString(), out meta)) return 3;
-            return Utils.GetValue<int>(meta, "level");
+            if (RuntimeLayoutPool == null || RuntimeLayoutPool.Count == 0) return null;
+            int n = RuntimeLayoutPool.Count;
+            int idx = ((variantIndex % n) + n) % n;
+            return RuntimeLayoutPool[idx];
         }
 
         // Helper: convert `Dictionary<string, object>` whose values are
@@ -171,6 +155,55 @@ namespace YgoMaster
                 if (v != null) result[kv.Key] = v;
             }
             return result;
+        }
+
+        static List<RuntimeLayoutVariant> ParseLayoutPool(Dictionary<string, object> entry)
+        {
+            List<object> raw = Utils.GetValue<List<object>>(entry, "runtime_layout_pool");
+            if (raw == null || raw.Count == 0) return null;
+            List<RuntimeLayoutVariant> pool = new List<RuntimeLayoutVariant>();
+            foreach (object o in raw)
+            {
+                Dictionary<string, object> v = o as Dictionary<string, object>;
+                if (v == null) continue;
+                RuntimeLayoutVariant variant = new RuntimeLayoutVariant
+                {
+                    Chapters       = ParseNestedDict(v, "chapters"),
+                    ChapterMeta    = ParseNestedDict(v, "chapter_meta"),
+                    BossChapterId  = Utils.GetValue<int>(v, "boss_chapter_id"),
+                };
+                if (variant.Chapters != null && variant.Chapters.Count > 0)
+                {
+                    pool.Add(variant);
+                }
+            }
+            return pool.Count > 0 ? pool : null;
+        }
+    }
+
+    // One layout variant from the pool — fully-baked chapter dicts +
+    // per-chapter metadata + boss id. Each gate ships several (different
+    // seeds) so per-player regens get distinct maps.
+    class RuntimeLayoutVariant
+    {
+        public Dictionary<string, Dictionary<string, object>> Chapters;
+        public Dictionary<string, Dictionary<string, object>> ChapterMeta;
+        public int BossChapterId;
+
+        public string GetChapterType(int chapterId)
+        {
+            if (ChapterMeta == null) return "duel";
+            Dictionary<string, object> meta;
+            if (!ChapterMeta.TryGetValue(chapterId.ToString(), out meta)) return "duel";
+            return Utils.GetValue<string>(meta, "type") ?? "duel";
+        }
+
+        public int GetChapterLevel(int chapterId)
+        {
+            if (ChapterMeta == null) return 3;
+            Dictionary<string, object> meta;
+            if (!ChapterMeta.TryGetValue(chapterId.ToString(), out meta)) return 3;
+            return Utils.GetValue<int>(meta, "level");
         }
     }
 }

@@ -48,12 +48,14 @@ namespace YgoMaster
             {
                 List<DeckPoolLoader.LoadedDeck> pool = DeckPoolLoader.LoadAll(dataDir, cfg.DeckPool);
                 deckPools[cfg.GateId] = pool;
-                int chapterCount = cfg.RuntimeChapters != null
-                    ? cfg.RuntimeChapters.Count : cfg.ChapterCount;
-                string source = cfg.RuntimeChapters != null ? "precomputed" : "linear-fallback";
+                int poolSize = cfg.RuntimeLayoutPool != null ? cfg.RuntimeLayoutPool.Count : 0;
+                int chapterCount = poolSize > 0
+                    ? cfg.RuntimeLayoutPool[0].Chapters.Count : cfg.ChapterCount;
+                string source = poolSize > 0
+                    ? poolSize + " layout variants" : "linear fallback";
                 Console.WriteLine("[RuntimeGateGenerator] gate " + cfg.GateId
                     + " (" + cfg.Format + ", " + cfg.DuelType + "): "
-                    + chapterCount + " chapters (" + source + "), "
+                    + chapterCount + " chapters/variant — " + source + ", "
                     + pool.Count + " decks in pool '" + cfg.DeckPool + "'");
             }
         }
@@ -207,13 +209,11 @@ namespace YgoMaster
         static GeneratedGate Generate(RuntimeGateConfig cfg, long seed)
         {
             Random rng = new Random((int)(seed & 0x7FFFFFFF));
-            int bossId = cfg.RuntimeBossChapterId > 0 ? cfg.RuntimeBossChapterId : cfg.BossChapterId;
             GeneratedGate gate = new GeneratedGate
             {
                 GateId         = cfg.GateId,
                 Seed           = seed,
                 GeneratedAt    = DateTimeOffset.UtcNow.ToUnixTimeSeconds(),
-                BossChapterId  = bossId,
                 Chapters       = new Dictionary<int, Dictionary<string, object>>(),
                 SoloDuels      = new Dictionary<int, DuelSettings>(),
                 SoloDuelDicts  = new Dictionary<int, Dictionary<string, object>>(),
@@ -224,18 +224,23 @@ namespace YgoMaster
             {
                 Console.WriteLine("[RuntimeGateGenerator] gate " + cfg.GateId
                     + ": empty deck pool — generating empty gate");
+                gate.BossChapterId = cfg.BossChapterId;
                 return gate;
             }
 
-            // Layout source: prefer Python-precomputed chapters (any
-            // format: hourglass / dungeon / tower / manual). Fall back
-            // to built-in linear N chapters if absent.
-            if (cfg.RuntimeChapters != null && cfg.RuntimeChapters.Count > 0)
+            // Pick a layout variant from the pool (different seed = different
+            // map). When the pool is empty (unknown format on Python side),
+            // fall back to built-in linear.
+            RuntimeLayoutVariant variant = cfg.LayoutVariant(rng.Next(int.MaxValue));
+            if (variant != null)
             {
-                GenerateFromPrecomputedLayout(cfg, gate, pool, rng);
+                gate.BossChapterId = variant.BossChapterId;
+                gate.LayoutVariantIndex = cfg.RuntimeLayoutPool.IndexOf(variant);
+                GenerateFromPrecomputedLayout(cfg, variant, gate, pool, rng);
             }
             else
             {
+                gate.BossChapterId = cfg.BossChapterId;
                 GenerateLinearFallback(cfg, gate, pool, rng);
             }
             return gate;
@@ -244,17 +249,18 @@ namespace YgoMaster
         // Iterate Python's precomputed chapter dicts. Each non-passive
         // chapter (npc_id=1) gets a per-player random deck + a DuelSettings
         // built from the relevant modifier template.
-        static void GenerateFromPrecomputedLayout(RuntimeGateConfig cfg, GeneratedGate gate,
+        static void GenerateFromPrecomputedLayout(RuntimeGateConfig cfg, RuntimeLayoutVariant variant,
+                                                   GeneratedGate gate,
                                                    List<DeckPoolLoader.LoadedDeck> pool, Random rng)
         {
-            foreach (KeyValuePair<string, Dictionary<string, object>> kv in cfg.RuntimeChapters)
+            foreach (KeyValuePair<string, Dictionary<string, object>> kv in variant.Chapters)
             {
                 int chapterId;
                 if (!int.TryParse(kv.Key, out chapterId)) continue;
                 Dictionary<string, object> chapterDict =
                     new Dictionary<string, object>(kv.Value);   // shallow-clone so we can mutate
 
-                string chapterType = cfg.GetChapterType(chapterId);
+                string chapterType = variant.GetChapterType(chapterId);
                 bool isDuel = Utils.GetValue<int>(chapterDict, "npc_id") == 1;
                 if (isDuel)
                 {
@@ -265,12 +271,12 @@ namespace YgoMaster
                     chapterDict["goat"] = new Dictionary<string, object>
                     {
                         { "type",      chapterType },
-                        { "level",     cfg.GetChapterLevel(chapterId) },
+                        { "level",     variant.GetChapterLevel(chapterId) },
                         { "deck_file", deck.Name },
                         { "runtime",   true },
                     };
                     Dictionary<string, object> duelDict =
-                        BuildDuelDict(cfg, chapterId, chapterType == "boss", deck);
+                        BuildDuelDict(cfg, chapterId, chapterType, deck);
                     gate.SoloDuelDicts[chapterId] = duelDict;
                     gate.SoloDuels[chapterId]     = HydrateDuelSettings(duelDict, chapterId);
                 }
@@ -279,7 +285,7 @@ namespace YgoMaster
                     chapterDict["goat"] = new Dictionary<string, object>
                     {
                         { "type",    chapterType },
-                        { "level",   cfg.GetChapterLevel(chapterId) },
+                        { "level",   variant.GetChapterLevel(chapterId) },
                         { "runtime", true },
                     };
                 }
@@ -300,7 +306,8 @@ namespace YgoMaster
                 DeckPoolLoader.LoadedDeck deck = pool[rng.Next(pool.Count)];
 
                 gate.Chapters[chapterId] = BuildChapterDict(cfg, chapterId, i, isBoss, deck);
-                Dictionary<string, object> duelDict = BuildDuelDict(cfg, chapterId, isBoss, deck);
+                Dictionary<string, object> duelDict = BuildDuelDict(
+                    cfg, chapterId, isBoss ? "boss" : "duel", deck);
                 gate.SoloDuelDicts[chapterId] = duelDict;
                 gate.SoloDuels[chapterId] = HydrateDuelSettings(duelDict, chapterId);
             }
@@ -389,18 +396,11 @@ namespace YgoMaster
         // Builds the duel dict in the same shape the Python builder
         // (`_solo_helpers.build_soloduel`) emits. Both sides use the same
         // deck — the engine swaps in the player's MyDeck at start.
+        // `chapterType` selects the modifier template (boss / elite / duel).
         static Dictionary<string, object> BuildDuelDict(
-            RuntimeGateConfig cfg, int chapterId, bool isBoss,
+            RuntimeGateConfig cfg, int chapterId, string chapterType,
             DeckPoolLoader.LoadedDeck deck)
         {
-            // Prefer the chapter's recorded type (elite/boss/duel) over the
-            // bool isBoss hint — the precomputed layout might tag a non-last
-            // chapter as boss or have elite tier.
-            string chapterType = cfg.GetChapterType(chapterId);
-            if (string.IsNullOrEmpty(chapterType) || chapterType == "duel")
-            {
-                chapterType = isBoss ? "boss" : "duel";
-            }
             Dictionary<string, object> duel = new Dictionary<string, object>
             {
                 { "Deck",            new List<object> { deck.SoloDuelDeck, deck.SoloDuelDeck } },

@@ -133,6 +133,10 @@ namespace YgoMaster
         public long Seed;
         public long GeneratedAt;
         public int BossChapterId;
+        // Index into RuntimeGateConfig.RuntimeLayoutPool — recorded so the
+        // saved per-player file is self-describing and the next regen
+        // can pick a *different* variant rather than risking the same.
+        public int LayoutVariantIndex;
         public Dictionary<int, Dictionary<string, object>> Chapters;
         public Dictionary<int, DuelSettings> SoloDuels;
         // Raw duel dicts kept alongside the parsed DuelSettings for
