@@ -49,12 +49,20 @@ group by area.
 - [ ] Per-chapter overrides (post-MVP — currently every duel-type
       chapter shares the same template; only boss differs).
 
-### Layout variety
-- [ ] Port `hourglass` layout from `build_grid_gate_procedural.py:emit_gate`
-      to C# — generates trunk + fan + narrowing with `grid_x`/`grid_y` +
-      `parent_chapter` set per node.
-- [ ] Port `dungeon` + `tower` formats.
-- [ ] Wire `runtime.layout` enum: `"linear" | "hourglass" | "dungeon" | "tower"`.
+### Layout variety — shipped (via Python precompute)
+- [x] Python precomputes the layout for any format
+      (hourglass / dungeon / tower / manual) and stashes chapter dicts +
+      per-chapter metadata on the GridGates entry under
+      `runtime_chapters` / `runtime_chapter_meta`.
+- [x] Server iterates precomputed chapters, picks per-player decks +
+      attaches type-appropriate modifier template.
+- [x] Falls back to built-in linear default when entry has no
+      `runtime_chapters`.
+- [ ] **Per-player layout uniqueness**: layout is stable per gate
+      (Python computes once at gen time). True per-player layouts
+      would require porting hourglass/dungeon/tower generators to C#
+      OR Python emitting a *pool* of layouts that the server cycles
+      through on each regen.
 
 ### Tier / difficulty scaling
 - [ ] `tier_range` (e.g. `[3, 6]`) drives per-chapter deck-pool tier
