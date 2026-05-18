@@ -58,11 +58,15 @@ group by area.
       attaches type-appropriate modifier template.
 - [x] Falls back to built-in linear default when entry has no
       `runtime_chapters`.
-- [ ] **Per-player layout uniqueness**: layout is stable per gate
-      (Python computes once at gen time). True per-player layouts
-      would require porting hourglass/dungeon/tower generators to C#
-      OR Python emitting a *pool* of layouts that the server cycles
-      through on each regen.
+- [x] **Layout variance across regens**: Python emits a pool of 8
+      layout variants per gate (different seeds). Server picks one
+      per (player, regen) at generation, recording the picked index
+      on `GeneratedGate.LayoutVariantIndex`. Pool size and "next
+      variant" strategy (random vs round-robin) tunable later.
+- [ ] **True per-player unique layouts**: still bounded by pool
+      size — same N players see the same N maps eventually. For
+      arbitrarily unique maps, port the format generators to C# (or
+      shell out to Python on demand).
 
 ### Tier / difficulty scaling
 - [ ] `tier_range` (e.g. `[3, 6]`) drives per-chapter deck-pool tier
