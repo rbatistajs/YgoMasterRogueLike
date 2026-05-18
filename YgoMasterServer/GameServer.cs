@@ -492,6 +492,7 @@ namespace YgoMaster
                                     SavePlayerNow(gameServerWebRequest.Player);
                                 }
 
+                                ResponseDebugDumper.MaybeDump(actName, gameServerWebRequest.Response);
                                 string jsonResponse = MiniJSON.Json.Serialize(gameServerWebRequest.Response);
                                 StringBuilder stringBuilder = new StringBuilder();
                                 stringBuilder.Append(@"{""code"":" + gameServerWebRequest.ErrorCode + @",""res"":[[" + actId + "," +

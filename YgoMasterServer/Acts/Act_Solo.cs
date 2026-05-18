@@ -1183,6 +1183,10 @@ namespace YgoMaster
         void Act_GateEntry(GameServerWebRequest request)
         {
             request.Player.SoloGateId = Utils.GetValue<int>(request.ActParams, "gate");
+            // Goat: ensure runtime gates are generated/loaded into SoloData
+            // before downstream lookups (UpdateSoloDeckValidation,
+            // GetChapterSetIds, etc.) consult the global dict.
+            WrapSoloDataForRuntimeGates(SoloData, request.Player);
             UpdateSoloDeckValidation(request, 0);
         }
 

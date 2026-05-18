@@ -13,6 +13,8 @@ namespace YgoMaster
         {
             RuntimeRandomResolver.Init(dataDirectory, Regulation);
             RuntimeGateGenerator.Init(dataDirectory);
+            ResponseDebugDumper.DataDirectory = dataDirectory;
+            ResponseDebugDumper.Enabled = true;   // flip off when done debugging
             HandleGoatArgs();
         }
 

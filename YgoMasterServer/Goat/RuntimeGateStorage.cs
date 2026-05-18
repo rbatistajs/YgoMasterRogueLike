@@ -41,6 +41,7 @@ namespace YgoMaster
                     BossChapterId  = Utils.GetValue<int>(doc, "boss_chapter_id"),
                     Chapters       = new Dictionary<int, Dictionary<string, object>>(),
                     SoloDuels      = new Dictionary<int, DuelSettings>(),
+                    SoloDuelDicts  = new Dictionary<int, Dictionary<string, object>>(),
                 };
 
                 Dictionary<string, object> chapters = Utils.GetValue<Dictionary<string, object>>(doc, "chapters");
@@ -63,9 +64,8 @@ namespace YgoMaster
                         if (!int.TryParse(kv.Key, out cid)) continue;
                         Dictionary<string, object> dsDict = kv.Value as Dictionary<string, object>;
                         if (dsDict == null) continue;
-                        DuelSettings ds = new DuelSettings();
-                        ds.FromDictionary(dsDict);
-                        gate.SoloDuels[cid] = ds;
+                        gate.SoloDuelDicts[cid] = dsDict;
+                        gate.SoloDuels[cid] = RuntimeGateGenerator.HydrateDuelSettings(dsDict, cid);
                     }
                 }
                 return gate;
@@ -88,10 +88,15 @@ namespace YgoMaster
                 chapters[kv.Key.ToString()] = kv.Value;
             }
 
+            // Save the raw input dicts (not ds.ToDictionary()): keeps the
+            // file size minimal and matches the Python-builder format
+            // exactly (no extra MaxPlayers-padded Deck slots, no upstream
+            // default fields). The DuelSettings instance is rebuilt from
+            // these dicts on load.
             Dictionary<string, object> duels = new Dictionary<string, object>();
-            foreach (KeyValuePair<int, DuelSettings> kv in gate.SoloDuels)
+            foreach (KeyValuePair<int, Dictionary<string, object>> kv in gate.SoloDuelDicts)
             {
-                duels[kv.Key.ToString()] = kv.Value.ToDictionary();
+                duels[kv.Key.ToString()] = kv.Value;
             }
 
             Dictionary<string, object> doc = new Dictionary<string, object>
@@ -130,5 +135,8 @@ namespace YgoMaster
         public int BossChapterId;
         public Dictionary<int, Dictionary<string, object>> Chapters;
         public Dictionary<int, DuelSettings> SoloDuels;
+        // Raw duel dicts kept alongside the parsed DuelSettings for
+        // round-trip-free persistence (see Save).
+        public Dictionary<int, Dictionary<string, object>> SoloDuelDicts;
     }
 }

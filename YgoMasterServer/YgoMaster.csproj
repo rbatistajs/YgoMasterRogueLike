@@ -111,6 +111,7 @@
     <Compile Include="Goat\DuelDllProps.cs" />
     <Compile Include="Goat\DuelSettings.Goat.cs" />
     <Compile Include="Goat\GameServer.Goat.cs" />
+    <Compile Include="Goat\ResponseDebugDumper.cs" />
     <Compile Include="Goat\RuntimeGateConfig.cs" />
     <Compile Include="Goat\RuntimeGateGenerator.cs" />
     <Compile Include="Goat\RuntimeGateStorage.cs" />

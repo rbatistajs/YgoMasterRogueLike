@@ -59,24 +59,43 @@ namespace YgoMaster
             return configs != null && configs.Count > 0;
         }
 
-        // Wraps `soloData` with the player's runtime-generated chapters.
-        // Returns the original dict (no clone) when there's nothing to
-        // inject — keeps the request hot-path cheap for vanilla flows.
+        // Ensures the player has fresh-or-cached generated chapters and
+        // splices them into `soloData` in place. We mutate the global dict
+        // (rather than clone) so that any downstream lookup using SoloData
+        // — most notably GetChapterSetIds, which decides MyDeck vs loaner
+        // at chapter-start — also sees the runtime chapters. Returns the
+        // same `soloData` reference for convenience.
+        //
+        // NOTE: this writes per-player chapters into a global dict. For
+        // single-player offline (the common case) this is fine. For a
+        // multi-player server, players would overwrite each other —
+        // revisit before that scenario matters.
         public static Dictionary<string, object> WrapSoloData(
             Dictionary<string, object> soloData, Player player, string playerDir)
         {
             if (!HasAnyGates()) return soloData;
-            EnsureGeneratedForPlayer(player, playerDir);
-
-            Dictionary<int, GeneratedGate> playerGates;
-            lock (stateLock)
+            try
             {
-                if (!playerStates.TryGetValue(player.Code, out playerGates) || playerGates.Count == 0)
+                Console.WriteLine("[RuntimeGate] WrapSoloData player=" + player.Code);
+                EnsureGeneratedForPlayer(player, playerDir);
+
+                Dictionary<int, GeneratedGate> playerGates;
+                lock (stateLock)
                 {
-                    return soloData;
+                    if (!playerStates.TryGetValue(player.Code, out playerGates) || playerGates.Count == 0)
+                    {
+                        return soloData;
+                    }
+                    InjectIntoSoloData(soloData, playerGates);
                 }
+                return soloData;
             }
-            return InjectIntoSoloData(soloData, playerGates);
+            catch (Exception ex)
+            {
+                Console.WriteLine("[RuntimeGate] WrapSoloData FAILED for player " + player.Code
+                    + ": " + ex);
+                return soloData;
+            }
         }
 
         // Used by GetSoloDuelSettings: returns the runtime DuelSettings
@@ -88,11 +107,21 @@ namespace YgoMaster
             lock (stateLock)
             {
                 Dictionary<int, GeneratedGate> playerGates;
-                if (!playerStates.TryGetValue(player.Code, out playerGates)) return null;
+                if (!playerStates.TryGetValue(player.Code, out playerGates))
+                {
+                    Console.WriteLine("[RuntimeGate] TryGetSoloDuel chapter=" + chapterId
+                        + " player=" + player.Code + " → no player state (miss)");
+                    return null;
+                }
                 foreach (GeneratedGate gate in playerGates.Values)
                 {
                     DuelSettings ds;
-                    if (gate.SoloDuels.TryGetValue(chapterId, out ds)) return ds;
+                    if (gate.SoloDuels.TryGetValue(chapterId, out ds))
+                    {
+                        Console.WriteLine("[RuntimeGate] TryGetSoloDuel chapter=" + chapterId
+                            + " → HIT (gate " + gate.GateId + ")");
+                        return ds;
+                    }
                 }
             }
             return null;
@@ -113,23 +142,38 @@ namespace YgoMaster
                 foreach (RuntimeGateConfig cfg in configs.Values)
                 {
                     GeneratedGate gate;
+                    bool loadedFromDisk = false;
                     if (!playerGates.TryGetValue(cfg.GateId, out gate))
                     {
                         gate = RuntimeGateStorage.Load(playerDir, cfg.GateId);
-                        if (gate != null) playerGates[cfg.GateId] = gate;
+                        if (gate != null)
+                        {
+                            playerGates[cfg.GateId] = gate;
+                            loadedFromDisk = true;
+                        }
                     }
 
                     bool needsGen = gate == null || IsBossCleared(player, gate);
-                    if (!needsGen) continue;
+                    if (!needsGen)
+                    {
+                        if (loadedFromDisk)
+                        {
+                            Console.WriteLine("[RuntimeGate] gate " + cfg.GateId
+                                + " player=" + player.Code + " → loaded from disk ("
+                                + gate.Chapters.Count + " chapters, boss=" + gate.BossChapterId + ")");
+                        }
+                        continue;
+                    }
 
+                    string reason = gate == null ? "no prior gen" : "boss cleared";
                     gate = Generate(cfg, NextSeed());
                     playerGates[cfg.GateId] = gate;
                     RuntimeGateStorage.Save(playerDir, gate);
-                    // Reset cleared status for the old chapter so the client
-                    // doesn't render the new boss already as "done".
                     ResetClearedFor(player, gate);
-                    Console.WriteLine("[RuntimeGateGenerator] regenerated gate "
-                        + cfg.GateId + " for player " + player.Code);
+                    Console.WriteLine("[RuntimeGate] gate " + cfg.GateId
+                        + " player=" + player.Code + " → GENERATED (" + reason + "): "
+                        + gate.Chapters.Count + " chapters, boss=" + gate.BossChapterId
+                        + ", seed=" + gate.Seed);
                 }
             }
         }
@@ -167,6 +211,7 @@ namespace YgoMaster
                 BossChapterId  = cfg.BossChapterId(),
                 Chapters       = new Dictionary<int, Dictionary<string, object>>(),
                 SoloDuels      = new Dictionary<int, DuelSettings>(),
+                SoloDuelDicts  = new Dictionary<int, Dictionary<string, object>>(),
             };
 
             List<DeckPoolLoader.LoadedDeck> pool;
@@ -184,13 +229,25 @@ namespace YgoMaster
                 DeckPoolLoader.LoadedDeck deck = pool[rng.Next(pool.Count)];
 
                 gate.Chapters[chapterId] = BuildChapterDict(cfg, chapterId, i, isBoss, deck);
-                gate.SoloDuels[chapterId] = BuildDuelSettings(cfg, chapterId, isBoss, deck);
+                Dictionary<string, object> duelDict = BuildDuelDict(cfg, chapterId, isBoss, deck);
+                gate.SoloDuelDicts[chapterId] = duelDict;
+                gate.SoloDuels[chapterId] = HydrateDuelSettings(duelDict, chapterId);
             }
             return gate;
         }
 
+        // Default boss portraits — valid IDs from the install. Used when
+        // the picked deck has no entry in boss_portraits.json (yet).
+        const string DefaultP1Img = "boss_21466326";
+        const string DefaultP2Img = "boss_34124316";
+
         // Linear layout for MVP: each chapter is one row below the previous,
         // grid_x fixed at 0. parent_chapter chains them.
+        //
+        // Mirrors the field set the Python builder writes — including
+        // `anime` (LoadSolo back-fills `anime: 0` on baked chapters; we
+        // must include it explicitly since our chapters are injected
+        // after that pass).
         static Dictionary<string, object> BuildChapterDict(
             RuntimeGateConfig cfg, int chapterId, int index, bool isBoss,
             DeckPoolLoader.LoadedDeck deck)
@@ -205,8 +262,9 @@ namespace YgoMaster
                 { "set_id",         0 },
                 { "unlock_id",      0 },
                 { "npc_id",         1 },
-                { "p1_img",         "" },
-                { "p2_img",         "" },
+                { "p1_img",         DefaultP1Img },
+                { "p2_img",         DefaultP2Img },
+                { "anime",          0 },
                 { "goat", new Dictionary<string, object>
                     {
                         { "type",      isBoss ? "boss" : "duel" },
@@ -218,11 +276,50 @@ namespace YgoMaster
             };
         }
 
-        // Builds a minimal DuelSettings by going through FromDictionary
-        // (so all the upstream reflection-based field/property init
-        // happens). Both sides use the same deck — the engine swaps in
-        // the player's MyDeck at start.
-        static DuelSettings BuildDuelSettings(
+        // Vanilla cosmetic defaults — mirror `_solo_helpers.VANILLA_COSMETICS`
+        // on the Python side. P1's actual values come from MyDeck at duel
+        // start; these are placeholders so the duel JSON has the same
+        // shape the engine expects.
+        static readonly List<object> DefaultMat        = new List<object> { 1090016, 1090016 };
+        static readonly List<object> DefaultDuelObject = new List<object> { 1100016, 1100016 };
+        static readonly List<object> DefaultAvatarHome = new List<object> { 1110016, 1110016 };
+        static readonly List<object> DefaultSleeve     = new List<object> { 0,       1070052 };
+        static readonly List<object> DefaultIcon       = new List<object> { 0,       1011047 };
+        static readonly List<object> DefaultIconFrame  = new List<object> { 0,       1032001 };
+        static readonly List<object> DefaultAvatar     = new List<object> { 0,       1000028 };
+        static readonly List<object> DefaultLife       = new List<object> { 8000,    8000    };
+        static readonly List<object> DefaultHnum       = new List<object> { 5,       5       };
+
+        // Constructs the runtime DuelSettings from the dict the same way
+        // LoadSoloDuels does for baked chapters: FromDictionary, assign
+        // unique Deck IDs (otherwise Deck[i].Id stays 0 and the client's
+        // deck-detail popup can't disambiguate), then SetRequiredDefaults
+        // (back-fills cosmetics, life, names, etc.).
+        //
+        // Deck IDs are derived from chapter id offset into a high range
+        // so they can't collide with sequential baked IDs (which start at
+        // 1 in LoadSoloDuels).
+        const int RuntimeDeckIdBase = 90000000;
+
+        public static DuelSettings HydrateDuelSettings(Dictionary<string, object> duelDict, int chapterId)
+        {
+            DuelSettings ds = new DuelSettings();
+            ds.FromDictionary(duelDict);
+            for (int i = 0; i < ds.Deck.Length; i++)
+            {
+                if (ds.Deck[i] != null && ds.Deck[i].MainDeckCards.Count > 0)
+                {
+                    ds.Deck[i].Id = RuntimeDeckIdBase + chapterId * 10 + i;
+                }
+            }
+            ds.SetRequiredDefaults();
+            return ds;
+        }
+
+        // Builds the duel dict in the same shape the Python builder
+        // (`_solo_helpers.build_soloduel`) emits. Both sides use the same
+        // deck — the engine swaps in the player's MyDeck at start.
+        static Dictionary<string, object> BuildDuelDict(
             RuntimeGateConfig cfg, int chapterId, bool isBoss,
             DeckPoolLoader.LoadedDeck deck)
         {
@@ -236,32 +333,47 @@ namespace YgoMaster
                 { "cpu",             100 },
                 { "cpuflag",         "None" },
                 { "regulation_name", cfg.RegulationName ?? "" },
+                { "mat",             DefaultMat },
+                { "duel_object",     DefaultDuelObject },
+                { "avatar_home",     DefaultAvatarHome },
+                { "sleeve",          DefaultSleeve },
+                { "icon",            DefaultIcon },
+                { "icon_frame",      DefaultIconFrame },
+                { "avatar",          DefaultAvatar },
+                { "life",            DefaultLife },
+                { "hnum",            DefaultHnum },
             };
             // TODO (post-MVP): merge cfg.Modifiers / cfg.BossModifiers here
             // (same shape Python `apply_modifiers` produces — random_specs +
-            // cmds + life + hnum).
-            DuelSettings ds = new DuelSettings();
-            ds.FromDictionary(duel);
-            return ds;
+            // cmds).
+            return duel;
         }
 
+        // Default gem reward per runtime chapter (category 1 = gems,
+        // item id 1 = gem). Matches the baked-chapter format used by the
+        // Python builder. Higher tiers / boss could vary in later phases.
+        const int DefaultGemReward = 20;
+
         // ----- injection -----
-        // Clones SoloData (shallow at the top, deep on the `chapter` and
-        // `gate` dicts we touch) and writes the player's generated chapters
-        // + the dynamically resolved clear_chapter into the copy.
-        static Dictionary<string, object> InjectIntoSoloData(
+        // Splices each player gate's chapters into `Solo.chapter[<gateId>]`,
+        // patches the gate metadata's `clear_chapter`, and registers reward
+        // entries for every generated chapter (SoloInfo loader logs a WARN
+        // if a chapter's mydeck_set_id / set_id has no reward entry —
+        // unconfirmed but suspected to also block deck selection on the
+        // client side). Mutates the dict directly (see WrapSoloData NOTE).
+        static void InjectIntoSoloData(
             Dictionary<string, object> soloData, Dictionary<int, GeneratedGate> playerGates)
         {
-            Dictionary<string, object> wrapped = new Dictionary<string, object>(soloData);
+            Dictionary<string, object> chapterRoot = Utils.GetDictionary(soloData, "chapter");
+            Dictionary<string, object> gateRoot    = Utils.GetDictionary(soloData, "gate");
+            if (chapterRoot == null || gateRoot == null) return;
 
-            // Per-gate clones of `Solo.chapter[<gateId>]` and `Solo.gate[<gateId>]`
-            // so we can override entries without mutating the global SoloData.
-            Dictionary<string, object> chapterRoot = wrapped.TryGetValue("chapter", out object cObj)
-                ? new Dictionary<string, object>(cObj as Dictionary<string, object>)
-                : new Dictionary<string, object>();
-            Dictionary<string, object> gateRoot = wrapped.TryGetValue("gate", out object gObj)
-                ? new Dictionary<string, object>(gObj as Dictionary<string, object>)
-                : new Dictionary<string, object>();
+            Dictionary<string, object> rewardRoot = Utils.GetDictionary(soloData, "reward");
+            if (rewardRoot == null)
+            {
+                rewardRoot = new Dictionary<string, object>();
+                soloData["reward"] = rewardRoot;
+            }
 
             foreach (GeneratedGate gate in playerGates.Values)
             {
@@ -269,24 +381,29 @@ namespace YgoMaster
                 foreach (KeyValuePair<int, Dictionary<string, object>> kv in gate.Chapters)
                 {
                     chaptersDict[kv.Key.ToString()] = kv.Value;
+
+                    // Register reward for whichever set id this chapter uses.
+                    int mydeckSetId = Utils.GetValue<int>(kv.Value, "mydeck_set_id");
+                    int loanerSetId = Utils.GetValue<int>(kv.Value, "set_id");
+                    int rewardKey = mydeckSetId != 0 ? mydeckSetId : loanerSetId;
+                    if (rewardKey != 0)
+                    {
+                        rewardRoot[rewardKey.ToString()] = new Dictionary<string, object>
+                        {
+                            // category 1 → { item 1 (gem) → count }
+                            { "1", new Dictionary<string, object> { { "1", DefaultGemReward } } }
+                        };
+                    }
                 }
                 chapterRoot[gate.GateId.ToString()] = chaptersDict;
 
-                // Patch the gate entry's clear_chapter to point at the
-                // dynamically generated boss.
-                object gateMetaObj;
-                if (gateRoot.TryGetValue(gate.GateId.ToString(), out gateMetaObj))
-                {
-                    Dictionary<string, object> gateMeta = new Dictionary<string, object>(
-                        gateMetaObj as Dictionary<string, object>);
-                    gateMeta["clear_chapter"] = gate.BossChapterId;
-                    gateRoot[gate.GateId.ToString()] = gateMeta;
-                }
-            }
+                Dictionary<string, object> gateMeta = Utils.GetDictionary(gateRoot, gate.GateId.ToString());
+                if (gateMeta != null) gateMeta["clear_chapter"] = gate.BossChapterId;
 
-            wrapped["chapter"] = chapterRoot;
-            wrapped["gate"]    = gateRoot;
-            return wrapped;
+                Console.WriteLine("[RuntimeGate] injected gate " + gate.GateId
+                    + " into SoloData: " + chaptersDict.Count + " chapters + rewards, clear_chapter="
+                    + gate.BossChapterId);
+            }
         }
     }
 }
