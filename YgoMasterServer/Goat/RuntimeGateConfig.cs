@@ -39,6 +39,20 @@ namespace YgoMaster
         // computes these at gen time so the server doesn't need to know
         // how to encode markers/random_specs.
         public Dictionary<string, Dictionary<string, object>> RuntimeTemplates;
+        // Pre-computed chapter dicts from the gate's format generator
+        // (hourglass / dungeon / tower / manual). Keyed by chapter id
+        // (string). When present, server uses these as-is for the Solo.json
+        // injection — chapter count / layout / parent_chapter / grid x/y
+        // all come from Python. When absent (unknown format), server falls
+        // back to its built-in linear default.
+        public Dictionary<string, Dictionary<string, object>> RuntimeChapters;
+        // Per-chapter metadata the server needs to drive its own logic:
+        //   { "200005": { "type": "elite", "level": 3 }, ... }
+        // Drives deck-pool tier selection + template selection.
+        public Dictionary<string, Dictionary<string, object>> RuntimeChapterMeta;
+        // Boss chapter id (set in concert with RuntimeChapters). 0 when
+        // we fall back to linear default.
+        public int RuntimeBossChapterId;
 
         // Loads every entry from GridGates.json filtered to `runtime: true`.
         // Returns a dict keyed by gate id — missing/malformed file → empty.
@@ -64,19 +78,6 @@ namespace YgoMaster
                 if (gateId == 0) continue;
                 string duelType = Utils.GetValue<string>(entry, "duel_type") ?? "Normal";
 
-                Dictionary<string, Dictionary<string, object>> templates = null;
-                Dictionary<string, object> rawTemplates =
-                    Utils.GetValue<Dictionary<string, object>>(entry, "runtime_templates");
-                if (rawTemplates != null)
-                {
-                    templates = new Dictionary<string, Dictionary<string, object>>();
-                    foreach (KeyValuePair<string, object> kv in rawTemplates)
-                    {
-                        Dictionary<string, object> tpl = kv.Value as Dictionary<string, object>;
-                        if (tpl != null) templates[kv.Key] = tpl;
-                    }
-                }
-
                 result[gateId] = new RuntimeGateConfig
                 {
                     GateId         = gateId,
@@ -85,7 +86,10 @@ namespace YgoMaster
                     RegulationName = duelType == "Rush" ? "Rush Duel" : "Goat Format",
                     FormatParams   = Utils.GetValue<Dictionary<string, object>>(entry, "format_params"),
                     GenericParams  = Utils.GetValue<Dictionary<string, object>>(entry, "generic_params"),
-                    RuntimeTemplates = templates,
+                    RuntimeTemplates    = ParseNestedDict(entry, "runtime_templates"),
+                    RuntimeChapters     = ParseNestedDict(entry, "runtime_chapters"),
+                    RuntimeChapterMeta  = ParseNestedDict(entry, "runtime_chapter_meta"),
+                    RuntimeBossChapterId = Utils.GetValue<int>(entry, "runtime_boss_chapter_id"),
                 };
             }
             return result;
@@ -133,6 +137,40 @@ namespace YgoMaster
             if (RuntimeTemplates.TryGetValue(chapterType, out tpl)) return tpl;
             if (RuntimeTemplates.TryGetValue("duel",       out tpl)) return tpl;
             return null;
+        }
+
+        public string GetChapterType(int chapterId)
+        {
+            if (RuntimeChapterMeta == null) return "duel";
+            Dictionary<string, object> meta;
+            if (!RuntimeChapterMeta.TryGetValue(chapterId.ToString(), out meta)) return "duel";
+            return Utils.GetValue<string>(meta, "type") ?? "duel";
+        }
+
+        public int GetChapterLevel(int chapterId)
+        {
+            if (RuntimeChapterMeta == null) return 3;
+            Dictionary<string, object> meta;
+            if (!RuntimeChapterMeta.TryGetValue(chapterId.ToString(), out meta)) return 3;
+            return Utils.GetValue<int>(meta, "level");
+        }
+
+        // Helper: convert `Dictionary<string, object>` whose values are
+        // themselves dicts (common shape for nested runtime tables).
+        static Dictionary<string, Dictionary<string, object>> ParseNestedDict(
+            Dictionary<string, object> entry, string key)
+        {
+            Dictionary<string, object> raw =
+                Utils.GetValue<Dictionary<string, object>>(entry, key);
+            if (raw == null) return null;
+            Dictionary<string, Dictionary<string, object>> result =
+                new Dictionary<string, Dictionary<string, object>>();
+            foreach (KeyValuePair<string, object> kv in raw)
+            {
+                Dictionary<string, object> v = kv.Value as Dictionary<string, object>;
+                if (v != null) result[kv.Key] = v;
+            }
+            return result;
         }
     }
 }

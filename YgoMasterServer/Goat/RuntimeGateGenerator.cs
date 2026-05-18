@@ -48,9 +48,12 @@ namespace YgoMaster
             {
                 List<DeckPoolLoader.LoadedDeck> pool = DeckPoolLoader.LoadAll(dataDir, cfg.DeckPool);
                 deckPools[cfg.GateId] = pool;
+                int chapterCount = cfg.RuntimeChapters != null
+                    ? cfg.RuntimeChapters.Count : cfg.ChapterCount;
+                string source = cfg.RuntimeChapters != null ? "precomputed" : "linear-fallback";
                 Console.WriteLine("[RuntimeGateGenerator] gate " + cfg.GateId
                     + " (" + cfg.Format + ", " + cfg.DuelType + "): "
-                    + cfg.ChapterCount + " chapters, "
+                    + chapterCount + " chapters (" + source + "), "
                     + pool.Count + " decks in pool '" + cfg.DeckPool + "'");
             }
         }
@@ -204,12 +207,13 @@ namespace YgoMaster
         static GeneratedGate Generate(RuntimeGateConfig cfg, long seed)
         {
             Random rng = new Random((int)(seed & 0x7FFFFFFF));
+            int bossId = cfg.RuntimeBossChapterId > 0 ? cfg.RuntimeBossChapterId : cfg.BossChapterId;
             GeneratedGate gate = new GeneratedGate
             {
                 GateId         = cfg.GateId,
                 Seed           = seed,
                 GeneratedAt    = DateTimeOffset.UtcNow.ToUnixTimeSeconds(),
-                BossChapterId  = cfg.BossChapterId,
+                BossChapterId  = bossId,
                 Chapters       = new Dictionary<int, Dictionary<string, object>>(),
                 SoloDuels      = new Dictionary<int, DuelSettings>(),
                 SoloDuelDicts  = new Dictionary<int, Dictionary<string, object>>(),
@@ -223,6 +227,72 @@ namespace YgoMaster
                 return gate;
             }
 
+            // Layout source: prefer Python-precomputed chapters (any
+            // format: hourglass / dungeon / tower / manual). Fall back
+            // to built-in linear N chapters if absent.
+            if (cfg.RuntimeChapters != null && cfg.RuntimeChapters.Count > 0)
+            {
+                GenerateFromPrecomputedLayout(cfg, gate, pool, rng);
+            }
+            else
+            {
+                GenerateLinearFallback(cfg, gate, pool, rng);
+            }
+            return gate;
+        }
+
+        // Iterate Python's precomputed chapter dicts. Each non-passive
+        // chapter (npc_id=1) gets a per-player random deck + a DuelSettings
+        // built from the relevant modifier template.
+        static void GenerateFromPrecomputedLayout(RuntimeGateConfig cfg, GeneratedGate gate,
+                                                   List<DeckPoolLoader.LoadedDeck> pool, Random rng)
+        {
+            foreach (KeyValuePair<string, Dictionary<string, object>> kv in cfg.RuntimeChapters)
+            {
+                int chapterId;
+                if (!int.TryParse(kv.Key, out chapterId)) continue;
+                Dictionary<string, object> chapterDict =
+                    new Dictionary<string, object>(kv.Value);   // shallow-clone so we can mutate
+
+                string chapterType = cfg.GetChapterType(chapterId);
+                bool isDuel = Utils.GetValue<int>(chapterDict, "npc_id") == 1;
+                if (isDuel)
+                {
+                    DeckPoolLoader.LoadedDeck deck = pool[rng.Next(pool.Count)];
+                    // Fill boss portraits + record deck in goat metadata.
+                    chapterDict["p1_img"] = DefaultP1Img;
+                    chapterDict["p2_img"] = DefaultP2Img;
+                    chapterDict["goat"] = new Dictionary<string, object>
+                    {
+                        { "type",      chapterType },
+                        { "level",     cfg.GetChapterLevel(chapterId) },
+                        { "deck_file", deck.Name },
+                        { "runtime",   true },
+                    };
+                    Dictionary<string, object> duelDict =
+                        BuildDuelDict(cfg, chapterId, chapterType == "boss", deck);
+                    gate.SoloDuelDicts[chapterId] = duelDict;
+                    gate.SoloDuels[chapterId]     = HydrateDuelSettings(duelDict, chapterId);
+                }
+                else
+                {
+                    chapterDict["goat"] = new Dictionary<string, object>
+                    {
+                        { "type",    chapterType },
+                        { "level",   cfg.GetChapterLevel(chapterId) },
+                        { "runtime", true },
+                    };
+                }
+                gate.Chapters[chapterId] = chapterDict;
+            }
+        }
+
+        // Original linear N-chapter behavior — kept as a fallback for
+        // entries without `runtime_chapters` (unknown format on the
+        // Python side, or entries written by an older builder).
+        static void GenerateLinearFallback(RuntimeGateConfig cfg, GeneratedGate gate,
+                                            List<DeckPoolLoader.LoadedDeck> pool, Random rng)
+        {
             for (int i = 0; i < cfg.ChapterCount; i++)
             {
                 int chapterId = cfg.ChapterIdBase + i;
@@ -234,7 +304,6 @@ namespace YgoMaster
                 gate.SoloDuelDicts[chapterId] = duelDict;
                 gate.SoloDuels[chapterId] = HydrateDuelSettings(duelDict, chapterId);
             }
-            return gate;
         }
 
         // Default boss portraits — valid IDs from the install. Used when
@@ -324,6 +393,14 @@ namespace YgoMaster
             RuntimeGateConfig cfg, int chapterId, bool isBoss,
             DeckPoolLoader.LoadedDeck deck)
         {
+            // Prefer the chapter's recorded type (elite/boss/duel) over the
+            // bool isBoss hint — the precomputed layout might tag a non-last
+            // chapter as boss or have elite tier.
+            string chapterType = cfg.GetChapterType(chapterId);
+            if (string.IsNullOrEmpty(chapterType) || chapterType == "duel")
+            {
+                chapterType = isBoss ? "boss" : "duel";
+            }
             Dictionary<string, object> duel = new Dictionary<string, object>
             {
                 { "Deck",            new List<object> { deck.SoloDuelDeck, deck.SoloDuelDeck } },
@@ -350,7 +427,7 @@ namespace YgoMaster
             // the GridGates entry — server just copies them in. The
             // negative-cid markers in `cmds` get resolved per-duel by
             // RuntimeRandomResolver.OnSoloDuelStart.
-            Dictionary<string, object> template = cfg.TemplateFor(isBoss ? "boss" : "duel");
+            Dictionary<string, object> template = cfg.TemplateFor(chapterType);
             if (template != null)
             {
                 foreach (KeyValuePair<string, object> kv in template)
