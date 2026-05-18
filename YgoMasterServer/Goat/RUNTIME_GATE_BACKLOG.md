@@ -35,15 +35,19 @@ group by area.
 
 ## Phase 2 — feature parity with baked gates
 
-### Modifiers in runtime config
-- [ ] Accept `modifiers` block in `RuntimeGates.json` (same shape Python
-      `_modifiers.apply_modifiers` produces — `random_specs` + `cmds` +
-      `life` + `hnum`).
-- [ ] Apply at `BuildDuelDict` time (currently has a `TODO` marker).
-- [ ] `boss_modifiers` override for the last chapter.
-- [ ] Reuse `RuntimeRandomResolver` at duel start so negative-cid markers
-      still resolve per-player (already works for baked specs — confirm
-      runtime markers flow the same).
+### Modifiers in runtime config — shipped
+- [x] Python precomputes templates per chapter type from
+      `generic_params.modifier_defaults`, stashes on the GridGates
+      entry under `runtime_templates` (uses the existing
+      `_modifiers.apply_modifiers` pipeline).
+- [x] Server attaches the template (cmds / random_specs / life / hnum)
+      to each generated chapter by type. Boss gets `boss` template,
+      others get `duel`.
+- [x] `RuntimeRandomResolver` resolves the negative-cid markers per
+      duel — fresh card picks every session even though the cmds
+      layout is template-stable.
+- [ ] Per-chapter overrides (post-MVP — currently every duel-type
+      chapter shares the same template; only boss differs).
 
 ### Layout variety
 - [ ] Port `hourglass` layout from `build_grid_gate_procedural.py:emit_gate`
