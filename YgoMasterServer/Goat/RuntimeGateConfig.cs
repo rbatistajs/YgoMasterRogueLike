@@ -4,76 +4,102 @@ using System.IO;
 
 namespace YgoMaster
 {
-    // Goat: per-gate runtime-generation config. Loaded once from
-    // `DataLE/RuntimeGates.json`. Keyed by gateId (matches Solo.json).
+    // Goat: per-gate config read from `DataLE/GridGates.json` — the same
+    // file the Python builder writes when the user creates/edits a gate
+    // through `build_grid_gate_procedural.py` / the gate editor GUI.
     //
-    // Schema (per gate):
-    //   chapter_count     int     — total chapters (incl. boss)
-    //   chapter_id_base   int     — first chapter id allocated (e.g. 900001)
-    //   deck_pool         string  — directory of `.json` player decks
-    //   regulation_name   string  — written into each generated DuelSettings
-    //   layout            string  — "linear" (MVP); future: "hourglass" etc.
-    //   modifiers         object  — optional, applied to each chapter's
-    //                               DuelSettings (random_specs / cmds /
-    //                               life / hnum — same shape Python builder
-    //                               emits via apply_modifiers).
-    //   boss_modifiers    object  — optional, override for the last chapter.
-    //   boss_deck_pool    string  — optional, override deck dir for boss.
+    // The C# server picks up entries with `runtime: true` and regenerates
+    // those gates per-player at duel start. Non-runtime gates ignored
+    // (their baked SoloDuels/*.json drive the duel like before).
     //
-    // Anything supported by the static gate pipeline should be reachable
-    // here — runtime gates intentionally aren't a subset of capabilities.
+    // Fields used today (see GridGates.json for the full shape):
+    //   gate_id          int    — Solo.json gate key
+    //   duel_type        string — "Normal" | "Rush" (drives deck pool default)
+    //   format           string — "linear" | "hourglass" | "dungeon" | "tower"
+    //   runtime          bool   — gate registered for per-player regen
+    //   name / blurb     string — already in IDS_SOLO; unused server-side
+    //   format_params    dict   — layout-specific knobs
+    //   generic_params   dict   — chapter counts, levels, modifier defaults
+    //
+    // For MVP the server only honors a small subset (chapter_count derived
+    // from generic_params; deck pool from duel_type). Richer layout / tier
+    // scaling lives in RUNTIME_GATE_BACKLOG.md.
     class RuntimeGateConfig
     {
         public int GateId;
-        public int ChapterCount;
-        public int ChapterIdBase;
-        public string DeckPool;
+        public string DuelType;
+        public string Format;
         public string RegulationName;
-        public string Layout;
-        public Dictionary<string, object> Modifiers;       // optional
-        public Dictionary<string, object> BossModifiers;   // optional
-        public string BossDeckPool;                         // optional
+        public Dictionary<string, object> FormatParams;
+        public Dictionary<string, object> GenericParams;
 
-        public static Dictionary<int, RuntimeGateConfig> LoadAll(string path)
+        // Loads every entry from GridGates.json filtered to `runtime: true`.
+        // Returns a dict keyed by gate id — missing/malformed file → empty.
+        public static Dictionary<int, RuntimeGateConfig> LoadAll(string dataDirectory)
         {
             Dictionary<int, RuntimeGateConfig> result = new Dictionary<int, RuntimeGateConfig>();
+            string path = Path.Combine(dataDirectory, "GridGates.json");
             if (!File.Exists(path)) return result;
 
             Dictionary<string, object> doc = MiniJSON.Json.DeserializeStripped(
                 File.ReadAllText(path)) as Dictionary<string, object>;
             if (doc == null) return result;
+            List<object> gates = Utils.GetValue<List<object>>(doc, "gates");
+            if (gates == null) return result;
 
-            foreach (KeyValuePair<string, object> entry in doc)
+            foreach (object g in gates)
             {
-                int gateId;
-                if (!int.TryParse(entry.Key, out gateId)) continue;
-                Dictionary<string, object> cfg = entry.Value as Dictionary<string, object>;
-                if (cfg == null) continue;
+                Dictionary<string, object> entry = g as Dictionary<string, object>;
+                if (entry == null) continue;
+                if (!Utils.GetValue<bool>(entry, "runtime")) continue;
+
+                int gateId = Utils.GetValue<int>(entry, "gate_id");
+                if (gateId == 0) continue;
+                string duelType = Utils.GetValue<string>(entry, "duel_type") ?? "Normal";
 
                 result[gateId] = new RuntimeGateConfig
                 {
-                    GateId          = gateId,
-                    ChapterCount    = Utils.GetValue<int>(cfg, "chapter_count", 10),
-                    ChapterIdBase   = Utils.GetValue<int>(cfg, "chapter_id_base", gateId * 10000 + 1),
-                    DeckPool        = Utils.GetValue<string>(cfg, "deck_pool"),
-                    RegulationName  = Utils.GetValue<string>(cfg, "regulation_name"),
-                    Layout          = Utils.GetValue<string>(cfg, "layout", "linear"),
-                    Modifiers       = Utils.GetValue<Dictionary<string, object>>(cfg, "modifiers"),
-                    BossModifiers   = Utils.GetValue<Dictionary<string, object>>(cfg, "boss_modifiers"),
-                    BossDeckPool    = Utils.GetValue<string>(cfg, "boss_deck_pool"),
+                    GateId         = gateId,
+                    DuelType       = duelType,
+                    Format         = Utils.GetValue<string>(entry, "format") ?? "linear",
+                    RegulationName = duelType == "Rush" ? "Rush Duel" : "Goat Format",
+                    FormatParams   = Utils.GetValue<Dictionary<string, object>>(entry, "format_params"),
+                    GenericParams  = Utils.GetValue<Dictionary<string, object>>(entry, "generic_params"),
                 };
             }
             return result;
         }
 
-        public int ChapterIdAt(int index)
+        public int ChapterCount
         {
-            return ChapterIdBase + index;
+            get
+            {
+                // MVP: pull from generic_params.duel_count if present, else 10.
+                // The full Python pipeline derives count from layout params
+                // (trunk_length / fan_count / etc.) — porting that to C# is
+                // in the backlog.
+                if (GenericParams != null)
+                {
+                    int n = Utils.GetValue<int>(GenericParams, "duel_count");
+                    if (n > 0) return n;
+                }
+                return 10;
+            }
         }
 
-        public int BossChapterId()
+        public int ChapterIdBase => GateId * 10000 + 1;
+
+        public int BossChapterId => ChapterIdBase + ChapterCount - 1;
+
+        public string DeckPool
         {
-            return ChapterIdAt(ChapterCount - 1);
+            get
+            {
+                // MVP default: mid-tier per duel type. Override slot left
+                // open for a future `runtime_deck_pool` generic param.
+                if (DuelType == "Rush") return "decks/rush/3";
+                return "decks/normal/3";
+            }
         }
     }
 }

@@ -36,11 +36,11 @@ namespace YgoMaster
             playerStates = new Dictionary<uint, Dictionary<int, GeneratedGate>>();
             deckPools = new Dictionary<int, List<DeckPoolLoader.LoadedDeck>>();
 
-            string configPath = Path.Combine(dataDir, "RuntimeGates.json");
-            configs = RuntimeGateConfig.LoadAll(configPath);
+            configs = RuntimeGateConfig.LoadAll(dataDir);
             if (configs.Count == 0)
             {
-                Console.WriteLine("[RuntimeGateGenerator] no RuntimeGates.json (or empty) — disabled");
+                Console.WriteLine("[RuntimeGateGenerator] no GridGates.json entries "
+                    + "with `runtime: true` — disabled");
                 return;
             }
 
@@ -49,7 +49,8 @@ namespace YgoMaster
                 List<DeckPoolLoader.LoadedDeck> pool = DeckPoolLoader.LoadAll(dataDir, cfg.DeckPool);
                 deckPools[cfg.GateId] = pool;
                 Console.WriteLine("[RuntimeGateGenerator] gate " + cfg.GateId
-                    + ": " + cfg.ChapterCount + " chapters, "
+                    + " (" + cfg.Format + ", " + cfg.DuelType + "): "
+                    + cfg.ChapterCount + " chapters, "
                     + pool.Count + " decks in pool '" + cfg.DeckPool + "'");
             }
         }
@@ -208,7 +209,7 @@ namespace YgoMaster
                 GateId         = cfg.GateId,
                 Seed           = seed,
                 GeneratedAt    = DateTimeOffset.UtcNow.ToUnixTimeSeconds(),
-                BossChapterId  = cfg.BossChapterId(),
+                BossChapterId  = cfg.BossChapterId,
                 Chapters       = new Dictionary<int, Dictionary<string, object>>(),
                 SoloDuels      = new Dictionary<int, DuelSettings>(),
                 SoloDuelDicts  = new Dictionary<int, Dictionary<string, object>>(),
@@ -224,7 +225,7 @@ namespace YgoMaster
 
             for (int i = 0; i < cfg.ChapterCount; i++)
             {
-                int chapterId = cfg.ChapterIdAt(i);
+                int chapterId = cfg.ChapterIdBase + i;
                 bool isBoss = (i == cfg.ChapterCount - 1);
                 DeckPoolLoader.LoadedDeck deck = pool[rng.Next(pool.Count)];
 
@@ -254,7 +255,7 @@ namespace YgoMaster
         {
             return new Dictionary<string, object>
             {
-                { "parent_chapter", index == 0 ? 0 : cfg.ChapterIdAt(index - 1) },
+                { "parent_chapter", index == 0 ? 0 : cfg.ChapterIdBase + index - 1 },
                 { "grid_x",         0 },
                 { "grid_y",         index },
                 { "begin_sn",       "" },
@@ -343,9 +344,9 @@ namespace YgoMaster
                 { "life",            DefaultLife },
                 { "hnum",            DefaultHnum },
             };
-            // TODO (post-MVP): merge cfg.Modifiers / cfg.BossModifiers here
-            // (same shape Python `apply_modifiers` produces — random_specs +
-            // cmds).
+            // TODO (post-MVP): pull modifiers from cfg.GenericParams.modifier_defaults
+            // (per-chapter-type defaults) + per-chapter overrides — same
+            // shape Python `apply_modifiers` produces (random_specs + cmds).
             return duel;
         }
 
