@@ -32,6 +32,13 @@ namespace YgoMaster
         public string RegulationName;
         public Dictionary<string, object> FormatParams;
         public Dictionary<string, object> GenericParams;
+        // Pre-computed modifier templates per chapter type
+        // ("boss"/"duel"/"elite"/...). Each value is a duel-dict fragment
+        // with cmds / random_specs / life / hnum that the server merges
+        // into the generated DuelSettings. Python (`_modifiers.apply_modifiers`)
+        // computes these at gen time so the server doesn't need to know
+        // how to encode markers/random_specs.
+        public Dictionary<string, Dictionary<string, object>> RuntimeTemplates;
 
         // Loads every entry from GridGates.json filtered to `runtime: true`.
         // Returns a dict keyed by gate id — missing/malformed file → empty.
@@ -57,6 +64,19 @@ namespace YgoMaster
                 if (gateId == 0) continue;
                 string duelType = Utils.GetValue<string>(entry, "duel_type") ?? "Normal";
 
+                Dictionary<string, Dictionary<string, object>> templates = null;
+                Dictionary<string, object> rawTemplates =
+                    Utils.GetValue<Dictionary<string, object>>(entry, "runtime_templates");
+                if (rawTemplates != null)
+                {
+                    templates = new Dictionary<string, Dictionary<string, object>>();
+                    foreach (KeyValuePair<string, object> kv in rawTemplates)
+                    {
+                        Dictionary<string, object> tpl = kv.Value as Dictionary<string, object>;
+                        if (tpl != null) templates[kv.Key] = tpl;
+                    }
+                }
+
                 result[gateId] = new RuntimeGateConfig
                 {
                     GateId         = gateId,
@@ -65,6 +85,7 @@ namespace YgoMaster
                     RegulationName = duelType == "Rush" ? "Rush Duel" : "Goat Format",
                     FormatParams   = Utils.GetValue<Dictionary<string, object>>(entry, "format_params"),
                     GenericParams  = Utils.GetValue<Dictionary<string, object>>(entry, "generic_params"),
+                    RuntimeTemplates = templates,
                 };
             }
             return result;
@@ -100,6 +121,18 @@ namespace YgoMaster
                 if (DuelType == "Rush") return "decks/rush/3";
                 return "decks/normal/3";
             }
+        }
+
+        // Picks the modifier template for a chapter type ("boss" / "duel"
+        // / "elite" / ...). Falls back to "duel" if the specific type
+        // isn't configured. Returns null if no templates registered.
+        public Dictionary<string, object> TemplateFor(string chapterType)
+        {
+            if (RuntimeTemplates == null || RuntimeTemplates.Count == 0) return null;
+            Dictionary<string, object> tpl;
+            if (RuntimeTemplates.TryGetValue(chapterType, out tpl)) return tpl;
+            if (RuntimeTemplates.TryGetValue("duel",       out tpl)) return tpl;
+            return null;
         }
     }
 }

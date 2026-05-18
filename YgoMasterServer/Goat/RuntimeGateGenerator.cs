@@ -344,9 +344,20 @@ namespace YgoMaster
                 { "life",            DefaultLife },
                 { "hnum",            DefaultHnum },
             };
-            // TODO (post-MVP): pull modifiers from cfg.GenericParams.modifier_defaults
-            // (per-chapter-type defaults) + per-chapter overrides — same
-            // shape Python `apply_modifiers` produces (random_specs + cmds).
+            // Attach the modifier template for this chapter type, if the
+            // gate has any. Python pre-computed `cmds` / `random_specs` /
+            // `life` / `hnum` via `apply_modifiers` and stored them on
+            // the GridGates entry — server just copies them in. The
+            // negative-cid markers in `cmds` get resolved per-duel by
+            // RuntimeRandomResolver.OnSoloDuelStart.
+            Dictionary<string, object> template = cfg.TemplateFor(isBoss ? "boss" : "duel");
+            if (template != null)
+            {
+                foreach (KeyValuePair<string, object> kv in template)
+                {
+                    duel[kv.Key] = kv.Value;
+                }
+            }
             return duel;
         }
 
