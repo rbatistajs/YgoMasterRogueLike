@@ -14,10 +14,16 @@ group by area.
 - [x] Solo.json injection (mutates global — single-player only — see notes)
 - [x] Reward registration per chapter set id (`Solo.reward[<id>]`)
 - [x] Hooks: `Act_SoloInfo`, `Act_GateEntry`, `GetSoloDuelSettings`
-- [x] `RuntimeGates.json` config schema (`chapter_count`, `chapter_id_base`,
-      `deck_pool`, `regulation_name`, `layout`)
-- [x] CLI `build_grid_gate_procedural.py add --runtime` (+ `gen`/`edit`/`delete`)
-- [x] GUI checkbox **Runtime gate** in `GateEditDialog`
+- [x] **Single source of truth**: `DataLE/GridGates.json` (Python builder
+      writes, C# server reads — same file). Entries flagged
+      `runtime: true` get per-player regen.
+- [x] CLI `add --runtime` + `edit --runtime/--no-runtime` flag — same
+      pipeline as baked gates otherwise.
+- [x] Python `_run_gen` branches: runtime entries skip the baked
+      chapter/SoloDuel pipeline and clean up any pre-existing baked
+      output (so toggling baked→runtime wipes the orphaned files).
+- [x] GUI checkbox **Runtime gate** in `GateEditDialog` — no UI change
+      beyond the checkbox; same form fills the entry, flag persisted.
 - [x] DuelSettings hydration parity with `LoadSoloDuels` (Deck IDs,
       `SetRequiredDefaults`, cosmetics, life, hnum)
 - [x] Storage round-trip without `ToDictionary` (avoid 4-slot Deck padding)
