@@ -744,6 +744,9 @@ namespace YgoMasterClient
                 case "logjson":// Logs json object at path
                     Console.WriteLine(YgomSystem.Utility.ClientWork.SerializePath(splitted[1]));
                     break;
+                case "validatecardimages":// Dump cards sem imagem (bundle ou disco) — só roda depois do menu carregar
+                    CardImageValidator.Run();
+                    break;
                 case "cardswithart":// List all cards with art (requires setup of YgoMaster/Data/CardData/)
                     {
                         HashSet<int> missingCardsWithArt = new HashSet<int>();

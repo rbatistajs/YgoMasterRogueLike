@@ -333,6 +333,9 @@ namespace YgoMasterClient
                 nativeTypes.Add(typeof(SoloDeckRegulationFilter));
                 nativeTypes.Add(typeof(SoloGateScrollEnabler));
                 nativeTypes.Add(typeof(SoloGateGridLayout));
+                nativeTypes.Add(typeof(RushRitualToExtraDeck));
+                nativeTypes.Add(typeof(RushRitualIcon));
+                nativeTypes.Add(typeof(RushLegendBadge));
                 nativeTypes.Add(typeof(YgomGame.Duel.DuelTutorialSetting));
                 nativeTypes.Add(typeof(YgomGame.Tutorial.CardFlyingViewController));
                 nativeTypes.Add(typeof(YgomGame.Utility.ItemUtil));

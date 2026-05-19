@@ -141,10 +141,12 @@ namespace YgomGame.Deck
             {
                 return 0;// YgomGame.Deck.DeckView.AddableType.Addable
             }
-            else
+            int original = hookGetAddableType.Original(thisPtr, cardID, regulation);
+            if (original == 0 && RushLegendLimit.WouldExceedLegendLimit(thisPtr, cardID))
             {
-                return hookGetAddableType.Original(thisPtr, cardID, regulation);
+                return 1;// non-zero blocks add (over limit / not addable)
             }
+            return original;
         }
 
         private static void SetMode(IntPtr thisPtr, Mode mode)
@@ -378,7 +380,7 @@ namespace YgomGame
         public static int NumOwnedCardsEstimate;
         public static int NumFilteredCards;
 
-        static IntPtr currentInstance;
+        public static IntPtr currentInstance;
         static IL2Class classInfo;
         static IL2Field fieldDeckView;
         static IL2Field fieldCollectionView;

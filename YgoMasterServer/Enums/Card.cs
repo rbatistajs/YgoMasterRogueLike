@@ -92,6 +92,8 @@ namespace YgoMaster
         R_FusionFX,
         RitualPend,
         RitualFlip,//v1.5.2
+        R_Ritual,// Requiem mod
+        R_RitualFX,// Requiem mod
     }
 
     /// <summary>

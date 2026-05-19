@@ -68,6 +68,10 @@
     <Compile Include="YgoMasterClient\Goat\SoloDeckRegulationFilter.cs" />
     <Compile Include="YgoMasterClient\Goat\SoloGateScrollEnabler.cs" />
     <Compile Include="YgoMasterClient\Goat\SoloGateGridLayout.cs" />
+    <Compile Include="YgoMasterClient\Goat\RushRitualToExtraDeck.cs" />
+    <Compile Include="YgoMasterClient\Goat\RushRitualIcon.cs" />
+    <Compile Include="YgoMasterClient\Goat\RushLegendLimit.cs" />
+    <Compile Include="YgoMasterClient\Goat\RushLegendBadge.cs" />
     <Compile Include="YgoMasterClient\SoundInterceptor.cs" />
     <Compile Include="YgoMasterClient\TradeUtils.cs" />
     <Compile Include="YgoMasterClient\ClientSettings.Text.cs" />
@@ -75,6 +79,7 @@
     <Compile Include="YgoMasterClient\ActionSheetViewController.cs" />
     <Compile Include="YgoMasterClient\AssetHelper.cs" />
     <Compile Include="YgoMasterClient\AssetHelper.Solo.cs" />
+    <Compile Include="YgoMasterClient\CardImageValidator.cs" />
     <Compile Include="YgoMasterClient\ClientSettings.cs" />
     <Compile Include="YgoMasterClient\CommonDialogViewController.cs" />
     <Compile Include="YgoMasterClient\ConsoleHelper.cs" />

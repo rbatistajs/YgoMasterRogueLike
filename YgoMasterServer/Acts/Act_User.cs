@@ -166,6 +166,8 @@ namespace YgoMaster
             {
                 structure[deck.Id.ToString()] = deck.ToDictionaryStructureDeck();
             }
+            List<object> cardLegend = new List<object>(CardLegend.Count);
+            foreach (int cid in CardLegend) cardLegend.Add(cid);
             request.Response["Master"] = new Dictionary<string, object>()
             {
                 { "CardRare", GetCardRarities(request.Player) },// Card rarities
@@ -173,6 +175,7 @@ namespace YgoMaster
                 { "Structure", structure },// All structure decks
                 { "Regulation", Regulation },// Forbidden / limited cards
                 { "RegulationIcon", RegulationIcon },
+                { "CardLegend", cardLegend },// Rush Legend cids (mod feature)
                 { "AccessorySet", AccessorySet },// NOTE: Should really be under User.Entry
                 { "CardFile", RawCardFilesData }// NOTE: Should really be under User.Entry
             };

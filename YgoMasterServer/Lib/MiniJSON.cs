@@ -29,6 +29,7 @@
 using System;
 using System.Collections;
 using System.Collections.Generic;
+using System.Globalization;
 using System.IO;
 using System.Text;
 using System.Linq;
@@ -398,12 +399,16 @@ namespace MiniJSON {
 
                 if (number.IndexOf('.') == -1) {
                     long parsedInt;
-                    Int64.TryParse(number, out parsedInt);
+                    Int64.TryParse(number, NumberStyles.Integer,
+                        CultureInfo.InvariantCulture, out parsedInt);
                     return parsedInt;
                 }
 
+                // Critical: InvariantCulture pra ler "0.55" como 0.55
+                // mesmo em locales que usam vírgula decimal (pt-BR etc).
                 double parsedDouble;
-                Double.TryParse(number, out parsedDouble);
+                Double.TryParse(number, NumberStyles.Float,
+                    CultureInfo.InvariantCulture, out parsedDouble);
                 return parsedDouble;
             }
 
@@ -630,8 +635,13 @@ namespace MiniJSON {
                 // NOTE: decimals lose precision during serialization.
                 // They always have, I'm just letting you know.
                 // Previously floats and doubles lost precision too.
+                //
+                // CRITICAL: ToString sem CultureInfo usa CurrentCulture,
+                // que em locales como pt-BR usa vírgula decimal — produz
+                // JSON inválido (0,55 em vez de 0.55) que quebra qualquer
+                // parser. Sempre InvariantCulture pra numbers em JSON.
                 if (value is float) {
-                    builder.Append(((float) value).ToString("R"));
+                    builder.Append(((float) value).ToString("R", CultureInfo.InvariantCulture));
                 } else if (value is int
                     || value is uint
                     || value is long
@@ -643,7 +653,7 @@ namespace MiniJSON {
                     builder.Append(value);
                 } else if (value is double
                     || value is decimal) {
-                    builder.Append(Convert.ToDouble(value).ToString("R"));
+                    builder.Append(Convert.ToDouble(value).ToString("R", CultureInfo.InvariantCulture));
                 } else {
                     SerializeString(value.ToString());
                 }
