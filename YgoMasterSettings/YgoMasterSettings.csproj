@@ -1,0 +1,190 @@
+<?xml version="1.0" encoding="utf-8"?>
+<Project ToolsVersion="12.0" DefaultTargets="Build" xmlns="http://schemas.microsoft.com/developer/msbuild/2003">
+  <PropertyGroup>
+    <Configuration Condition=" '$(Configuration)' == '' ">Debug</Configuration>
+    <Platform Condition=" '$(Platform)' == '' ">x64</Platform>
+    <ProjectGuid>{D8B2C3E1-5F4A-4E1B-9C7D-1A2B3C4D5E6F}</ProjectGuid>
+    <OutputType>WinExe</OutputType>
+    <RootNamespace>YgoMasterSettings</RootNamespace>
+    <AssemblyName>YgoMasterSettings</AssemblyName>
+    <TargetFrameworkVersion>v4.8</TargetFrameworkVersion>
+    <FileAlignment>512</FileAlignment>
+    <!-- Embed app.manifest pra DPI awareness + Common Controls v6 -->
+    <ApplicationManifest>app.manifest</ApplicationManifest>
+    <!-- Suppress Forms .resx requirement for hand-coded forms. -->
+    <AutoGenerateBindingRedirects>true</AutoGenerateBindingRedirects>
+  </PropertyGroup>
+  <PropertyGroup Condition="'$(Configuration)|$(Platform)' == 'Debug|x64'">
+    <DebugSymbols>true</DebugSymbols>
+    <OutputPath>..\YgoMaster\</OutputPath>
+    <DefineConstants>DEBUG;TRACE</DefineConstants>
+    <DebugType>full</DebugType>
+    <PlatformTarget>x64</PlatformTarget>
+    <ErrorReport>prompt</ErrorReport>
+  </PropertyGroup>
+  <PropertyGroup Condition="'$(Configuration)|$(Platform)' == 'Release|x64'">
+    <OutputPath>..\YgoMaster\</OutputPath>
+    <DefineConstants>TRACE</DefineConstants>
+    <Optimize>true</Optimize>
+    <DebugType>pdbonly</DebugType>
+    <PlatformTarget>x64</PlatformTarget>
+    <ErrorReport>prompt</ErrorReport>
+  </PropertyGroup>
+  <ItemGroup>
+    <Reference Include="System" />
+    <Reference Include="System.Core" />
+    <Reference Include="System.Data" />
+    <Reference Include="System.Drawing" />
+    <Reference Include="System.Windows.Forms" />
+    <Reference Include="System.Xml" />
+  </ItemGroup>
+  <ItemGroup>
+    <!-- Assembly metadata (FileDescription etc — ver AssemblyInfo.cs) -->
+    <Compile Include="Properties\AssemblyInfo.cs" />
+    <!-- App entry + UI shell -->
+    <Compile Include="Program.cs" />
+    <Compile Include="MainWindow.cs" />
+    <Compile Include="Theme.cs" />
+    <!-- Tabs (placeholder por enquanto, vão sendo adicionados por fase) -->
+    <Compile Include="Tabs\GateRegistryTab.cs" />
+    <Compile Include="Tabs\CardListTab.cs" />
+    <Compile Include="Tabs\ShopTab.cs" />
+    <Compile Include="Tabs\Shop\ShopPacksSubTab.cs" />
+    <Compile Include="Tabs\Shop\ShopStructuresSubTab.cs" />
+    <Compile Include="Tabs\Shop\ShopAccessoriesSubTab.cs" />
+    <Compile Include="Tabs\Shop\ShopGlobalsSubTab.cs" />
+    <Compile Include="Tabs\Shop\ShopOddsSubTab.cs" />
+    <Compile Include="Tabs\Shop\ShopVisualsSubTab.cs" />
+    <Compile Include="Tabs\PlaceholderTab.cs" />
+    <!-- Util helpers (parsing standalone de DataLE sem depender de info/) -->
+    <Compile Include="Util\CardNameLookup.cs" />
+    <Compile Include="Util\CardTextWriter.cs" />
+    <Compile Include="Util\FormatPools.cs" />
+    <Compile Include="Util\ShopData.cs" />
+    <Compile Include="Util\ShopOddsData.cs" />
+    <Compile Include="Util\PackImageProcessor.cs" />
+    <Compile Include="Util\JsonFileWriter.cs" />
+    <Compile Include="Util\ContainerInstaller.cs" />
+    <Compile Include="Util\CardSameLookup.cs" />
+    <Compile Include="Util\CardLegendStore.cs" />
+    <Compile Include="Util\PropWriter.cs" />
+    <!-- Dialogs (modais que tabs disparam) -->
+    <Compile Include="Dialogs\GridGateSchema.cs" />
+    <Compile Include="Dialogs\GateEditDialog.cs" />
+    <Compile Include="Dialogs\CurveBandsDialog.cs" />
+    <Compile Include="Dialogs\ModifierSlotRow.cs" />
+    <Compile Include="Dialogs\ModifierEditor.cs" />
+    <Compile Include="Dialogs\ModifiersDialog.cs" />
+    <Compile Include="Dialogs\RewardsDialog.cs" />
+    <Compile Include="Dialogs\LayoutCanvas.cs" />
+    <Compile Include="Dialogs\LayoutEditorDialog.cs" />
+    <Compile Include="Dialogs\CardPicker.cs" />
+    <Compile Include="Dialogs\ShopPackEditDialog.cs" />
+    <Compile Include="Dialogs\ShopStructureEditDialog.cs" />
+    <Compile Include="Dialogs\ShopAccessoryEditDialog.cs" />
+    <Compile Include="Dialogs\ShopPackOddsEditDialog.cs" />
+  </ItemGroup>
+
+  <!-- Backend compartilhado com YgoMasterServer via <Link>. Sem dup
+       em disco — esses files vivem no server e o linker do MSBuild
+       inclui na build do settings. Mudou no server, próximo build do
+       settings já pega. -->
+  <ItemGroup>
+    <!-- Core utilities que os modules Goat usam -->
+    <Compile Include="..\YgoMasterServer\Lib\MiniJSON.cs">
+      <Link>Shared\Lib\MiniJSON.cs</Link>
+    </Compile>
+    <Compile Include="..\YgoMasterServer\Utils.cs">
+      <Link>Shared\Utils.cs</Link>
+    </Compile>
+    <Compile Include="..\YgoMasterServer\Enums\ItemID.cs">
+      <Link>Shared\Enums\ItemID.cs</Link>
+    </Compile>
+    <Compile Include="..\YgoMasterServer\Enums\Card.cs">
+      <Link>Shared\Enums\Card.cs</Link>
+    </Compile>
+    <!-- Goat backend modules (todos os que o settings vai usar
+         in-process pra gen/sync/edit gates) -->
+    <Compile Include="..\YgoMasterServer\Goat\DeckPoolLoader.cs">
+      <Link>Shared\Goat\DeckPoolLoader.cs</Link>
+    </Compile>
+    <Compile Include="..\YgoMasterServer\Goat\Builder\BakedFilePatcher.cs">
+      <Link>Shared\Goat\Builder\BakedFilePatcher.cs</Link>
+    </Compile>
+    <Compile Include="..\YgoMasterServer\Goat\Builder\EntryHasher.cs">
+      <Link>Shared\Goat\Builder\EntryHasher.cs</Link>
+    </Compile>
+    <Compile Include="..\YgoMasterServer\Goat\Builder\GridGateBaker.cs">
+      <Link>Shared\Goat\Builder\GridGateBaker.cs</Link>
+    </Compile>
+    <Compile Include="..\YgoMasterServer\Goat\Builder\SoloDuelBuilder.cs">
+      <Link>Shared\Goat\Builder\SoloDuelBuilder.cs</Link>
+    </Compile>
+    <Compile Include="..\YgoMasterServer\Goat\Builder\SoloJsonPatcher.cs">
+      <Link>Shared\Goat\Builder\SoloJsonPatcher.cs</Link>
+    </Compile>
+    <Compile Include="..\YgoMasterServer\Goat\Builder\SoloRewards.cs">
+      <Link>Shared\Goat\Builder\SoloRewards.cs</Link>
+    </Compile>
+    <Compile Include="..\YgoMasterServer\Goat\Cosmetics\CosmeticsPicker.cs">
+      <Link>Shared\Goat\Cosmetics\CosmeticsPicker.cs</Link>
+    </Compile>
+    <Compile Include="..\YgoMasterServer\Goat\Layout\DungeonGenerator.cs">
+      <Link>Shared\Goat\Layout\DungeonGenerator.cs</Link>
+    </Compile>
+    <Compile Include="..\YgoMasterServer\Goat\Layout\GenerationContext.cs">
+      <Link>Shared\Goat\Layout\GenerationContext.cs</Link>
+    </Compile>
+    <Compile Include="..\YgoMasterServer\Goat\Layout\HourglassGenerator.cs">
+      <Link>Shared\Goat\Layout\HourglassGenerator.cs</Link>
+    </Compile>
+    <Compile Include="..\YgoMasterServer\Goat\Layout\LayoutGenerator.cs">
+      <Link>Shared\Goat\Layout\LayoutGenerator.cs</Link>
+    </Compile>
+    <Compile Include="..\YgoMasterServer\Goat\Layout\LayoutNode.cs">
+      <Link>Shared\Goat\Layout\LayoutNode.cs</Link>
+    </Compile>
+    <Compile Include="..\YgoMasterServer\Goat\Layout\LayoutPresets.cs">
+      <Link>Shared\Goat\Layout\LayoutPresets.cs</Link>
+    </Compile>
+    <Compile Include="..\YgoMasterServer\Goat\Layout\ManualGenerator.cs">
+      <Link>Shared\Goat\Layout\ManualGenerator.cs</Link>
+    </Compile>
+    <Compile Include="..\YgoMasterServer\Goat\Layout\PostProcessors.cs">
+      <Link>Shared\Goat\Layout\PostProcessors.cs</Link>
+    </Compile>
+    <Compile Include="..\YgoMasterServer\Goat\Layout\TowerGenerator.cs">
+      <Link>Shared\Goat\Layout\TowerGenerator.cs</Link>
+    </Compile>
+    <Compile Include="..\YgoMasterServer\Goat\Modifiers\ModifierApplier.cs">
+      <Link>Shared\Goat\Modifiers\ModifierApplier.cs</Link>
+    </Compile>
+    <Compile Include="..\YgoMasterServer\Goat\Rewards\RewardConfig.cs">
+      <Link>Shared\Goat\Rewards\RewardConfig.cs</Link>
+    </Compile>
+    <Compile Include="..\YgoMasterServer\Goat\Rewards\RewardPicker.cs">
+      <Link>Shared\Goat\Rewards\RewardPicker.cs</Link>
+    </Compile>
+  </ItemGroup>
+  <Import Project="$(MSBuildToolsPath)\Microsoft.CSharp.targets" />
+
+  <!-- Copia YgoMasterSettings.exe + .pdb pro install dir após build (mesmo
+       padrão dos outros csprojs). Idempotente; no-op se a pasta não existe. -->
+  <PropertyGroup>
+    <GoatInstallDir>D:\SteamLibrary\steamapps\common\Yu-Gi-Oh!  Master Duel\YgoMasterLE - Goat</GoatInstallDir>
+  </PropertyGroup>
+  <Target Name="CopyToGoatInstall" AfterTargets="Build"
+          Condition="Exists('$(GoatInstallDir)')">
+    <!-- Mata a instância rodando antes do copy — senão o exe fica
+         locked e o copy falha após 10 retries. Silenciamos stderr
+         (2>nul) e ignoramos exit code pra não dar erro quando o
+         processo simplesmente não está rodando. -->
+    <Exec Command="taskkill /F /IM YgoMasterSettings.exe 2&gt;nul"
+          IgnoreExitCode="true" />
+    <Copy SourceFiles="$(OutputPath)YgoMasterSettings.exe;$(OutputPath)YgoMasterSettings.pdb"
+          DestinationFolder="$(GoatInstallDir)"
+          SkipUnchangedFiles="true" />
+    <Message Text="[Goat] Copied YgoMasterSettings.exe + .pdb -&gt; $(GoatInstallDir)"
+             Importance="high" />
+  </Target>
+</Project>

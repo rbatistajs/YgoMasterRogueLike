@@ -5,6 +5,8 @@ Project("{FAE04EC0-301F-11D3-BF4B-00C04F79EFBC}") = "YgoMaster", "YgoMasterServe
 EndProject
 Project("{FAE04EC0-301F-11D3-BF4B-00C04F79EFBC}") = "YgoMasterClient", "YgoMasterClient.csproj", "{BE0FAEA9-D843-4DA2-9B59-1232DC9E54E5}"
 EndProject
+Project("{FAE04EC0-301F-11D3-BF4B-00C04F79EFBC}") = "YgoMasterSettings", "YgoMasterSettings\YgoMasterSettings.csproj", "{D8B2C3E1-5F4A-4E1B-9C7D-1A2B3C4D5E6F}"
+EndProject
 Global
 	GlobalSection(SolutionConfigurationPlatforms) = preSolution
 		Debug|x64 = Debug|x64
@@ -19,6 +21,10 @@ Global
 		{BE0FAEA9-D843-4DA2-9B59-1232DC9E54E5}.Debug|x64.Build.0 = Debug|x64
 		{BE0FAEA9-D843-4DA2-9B59-1232DC9E54E5}.Release|x64.ActiveCfg = Release|x64
 		{BE0FAEA9-D843-4DA2-9B59-1232DC9E54E5}.Release|x64.Build.0 = Release|x64
+		{D8B2C3E1-5F4A-4E1B-9C7D-1A2B3C4D5E6F}.Debug|x64.ActiveCfg = Debug|x64
+		{D8B2C3E1-5F4A-4E1B-9C7D-1A2B3C4D5E6F}.Debug|x64.Build.0 = Debug|x64
+		{D8B2C3E1-5F4A-4E1B-9C7D-1A2B3C4D5E6F}.Release|x64.ActiveCfg = Release|x64
+		{D8B2C3E1-5F4A-4E1B-9C7D-1A2B3C4D5E6F}.Release|x64.Build.0 = Release|x64
 	EndGlobalSection
 	GlobalSection(SolutionProperties) = preSolution
 		HideSolutionNode = FALSE
