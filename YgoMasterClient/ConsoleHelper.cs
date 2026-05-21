@@ -854,6 +854,9 @@ namespace YgoMasterClient
                 case "rgdeck":// dev: open the roguelike deck-select screen
                     RoguelikeDeckSelectScreen.Open();
                     break;
+                case "rgmap":// dev: open the roguelike map screen
+                    RoguelikeMapScreen.Open();
+                    break;
                 case "pvpops":// Generates enum for YgoMaster.PvpOperation
                     {
                         using (TextWriter tw = File.CreateText(Path.Combine(Program.CurrentDir, "PvpOps.txt")))
