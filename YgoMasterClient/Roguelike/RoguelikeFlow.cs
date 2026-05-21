@@ -1,3 +1,5 @@
+using System;
+
 namespace YgoMasterClient
 {
     // Run-flow reactions: opens the deck-select screen and handles the async responses of
@@ -14,9 +16,17 @@ namespace YgoMasterClient
         public static void OnNetworkComplete(string cmd)
         {
             if (cmd == "Roguelike.start_run")
+            {
                 OpenDeckSelect();
+            }
             else if (cmd == "Roguelike.choose_deck")
-                RoguelikeMapScreen.Open();   // deck chosen → the map is ready, go straight to it
+            {
+                // The ActionSheet drawer has closed by now; pop the deck-select screen so
+                // back from the map returns Home, then open the map.
+                IntPtr manager = YgomGame.Menu.ContentViewControllerManager.GetManager();
+                if (manager != IntPtr.Zero) YgomSystem.UI.ViewControllerManager.PopChildViewController(manager);
+                RoguelikeMapScreen.Open();
+            }
         }
     }
 }

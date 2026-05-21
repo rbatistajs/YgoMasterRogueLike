@@ -192,9 +192,8 @@ namespace YgoMasterClient
 
         static void Select(int index)
         {
+            // choose_deck's completion (RoguelikeFlow) pops this screen and opens the map.
             RoguelikeApi.ChooseDeck(index);
-            IntPtr manager = YgomGame.Menu.ContentViewControllerManager.GetManager();
-            if (manager != IntPtr.Zero) YgomSystem.UI.ViewControllerManager.PopChildViewController(manager);
         }
 
         // Open the game's native read-only deck viewer (DeckBrowser / "Deck do Oponente")
