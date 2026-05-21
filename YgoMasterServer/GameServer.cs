@@ -487,6 +487,9 @@ namespace YgoMaster
                                     case "Roguelike.abandon_run":
                                         Act_RoguelikeAbandonRun(gameServerWebRequest);
                                         break;
+                                    case "Roguelike.choose_deck":
+                                        Act_RoguelikeChooseDeck(gameServerWebRequest);
+                                        break;
                                     default:
                                         Utils.LogInfo("Unhandled act " + actsHeader);
                                         Debug.WriteLine("Unhandled act " + actsHeader + " " + MiniJSON.Json.Serialize(vals));
