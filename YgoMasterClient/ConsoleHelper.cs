@@ -854,13 +854,6 @@ namespace YgoMasterClient
                 case "rgdeck":// dev: open the roguelike deck-select screen
                     RoguelikeDeckSelectScreen.Open();
                     break;
-                case "rgproof":// dev spike: inject bg + card image into current top VC. Usage: rgproof [cid]
-                    {
-                        int cid = 4007;
-                        if (splitted.Length > 1 && int.TryParse(splitted[1], out int proofCid)) cid = proofCid;
-                        RoguelikeUiProof.Run(cid);
-                    }
-                    break;
                 case "pvpops":// Generates enum for YgoMaster.PvpOperation
                     {
                         using (TextWriter tw = File.CreateText(Path.Combine(Program.CurrentDir, "PvpOps.txt")))
