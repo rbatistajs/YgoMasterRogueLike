@@ -15,10 +15,13 @@ namespace YgoMaster
 
         void Act_RoguelikeStartRun(GameServerWebRequest request)
         {
+            string gameType = "base_deck";
+            if (request.ActParams != null)
+                gameType = Utils.GetValue<string>(request.ActParams, "gameType", "base_deck");
             RoguelikeRun run = new RoguelikeRun
             {
                 Active = true,
-                GameType = Utils.GetValue<string>(request.ActParams, "gameType", "base_deck"),
+                GameType = gameType,
                 Seed = new Random().Next(),
                 CreatedAt = DateTime.UtcNow.ToString("o"),
             };
