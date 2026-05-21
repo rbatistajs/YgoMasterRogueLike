@@ -124,6 +124,7 @@
     <Compile Include="Goat\GameServer.Goat.cs" />
     <Compile Include="Roguelike\RoguelikeRun.cs" />
     <Compile Include="Roguelike\RoguelikeDeckPool.cs" />
+    <Compile Include="Roguelike\RoguelikeSettings.cs" />
     <Compile Include="Roguelike\GameServer.Roguelike.cs" />
     <Compile Include="Goat\Layout\DungeonGenerator.cs" />
     <Compile Include="Goat\Layout\GenerationContext.cs" />
