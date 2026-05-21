@@ -2109,6 +2109,7 @@ namespace YgomSystem.UI
         static IL2Method methodLoadViewControllerPrefab;
         static IL2Method methodGetViewControllerT;
         static Dictionary<IntPtr, IL2Method> methodGetViewControllerTInstances = new Dictionary<IntPtr, IL2Method>();
+        public static bool LogPrefabPaths;   // dev: log each VC prefab path as it loads (toggle via `vclog`)
 
         delegate void Del_PushChildViewController(IntPtr thisPtr, IntPtr prefabpathPtr);
         static Hook<Del_PushChildViewController> hookPushChildViewController;
@@ -2137,11 +2138,8 @@ namespace YgomSystem.UI
 
         public static IntPtr LoadViewControllerPrefab(IntPtr thisPtr, IntPtr prefabpathPtr)
         {
-            /*if (prefabpathPtr != IntPtr.Zero)
-            {
-                string prefabpath = new IL2String(prefabpathPtr).ToString();
-                Console.WriteLine("vc: " + prefabpath);
-            }*/
+            if (LogPrefabPaths && prefabpathPtr != IntPtr.Zero)
+                Console.WriteLine("[vc] " + new IL2String(prefabpathPtr).ToString());
             return hookLoadViewControllerPrefab.Original.Invoke(thisPtr, prefabpathPtr);
         }
 

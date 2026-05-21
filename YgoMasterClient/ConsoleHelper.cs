@@ -819,6 +819,45 @@ namespace YgoMasterClient
                         }
                     }
                     break;
+                case "vclog":// Toggle logging of view controller prefab paths as screens load
+                    YgomSystem.UI.ViewControllerManager.LogPrefabPaths = !YgomSystem.UI.ViewControllerManager.LogPrefabPaths;
+                    Console.WriteLine("[vclog] prefab path logging = " + YgomSystem.UI.ViewControllerManager.LogPrefabPaths);
+                    break;
+                case "vcdump":// Dump the current top view controller's hierarchy (compact: names + components) to _tmp. Optional depth arg (default 6).
+                    {
+                        int depth = 6;
+                        if (splitted.Length > 1 && int.TryParse(splitted[1], out int parsedDepth)) depth = parsedDepth;
+                        IntPtr manager = YgomGame.Menu.ContentViewControllerManager.GetManager();
+                        if (manager == IntPtr.Zero) { Console.WriteLine("[vcdump] no manager"); break; }
+                        IntPtr top = YgomSystem.UI.ViewControllerManager.GetStackTopViewController(manager);
+                        if (top == IntPtr.Zero) { Console.WriteLine("[vcdump] no top VC"); break; }
+                        string className = "UNKNOWN";
+                        IntPtr vcClass = Import.Object.il2cpp_object_get_class(top);
+                        if (vcClass != IntPtr.Zero)
+                            className = Marshal.PtrToStringAnsi(Import.Class.il2cpp_class_get_name(vcClass));
+                        IntPtr go = UnityEngine.Component.GetGameObject(top);
+                        string tree = RoguelikeDebug.DumpTree(go, depth);
+                        string file = "vc_" + className + ".txt";
+                        RoguelikeDebug.Write(file, tree);
+                        Console.WriteLine("[vcdump] " + className + " depth=" + depth + " -> _tmp/" + file);
+                    }
+                    break;
+                case "rgpush":// Push an arbitrary view controller prefab standalone (dev: test reuse bases). Usage: rgpush <prefab/path>
+                    {
+                        if (splitted.Length < 2) { Console.WriteLine("[rgpush] usage: rgpush <prefab/path>"); break; }
+                        IntPtr manager = YgomGame.Menu.ContentViewControllerManager.GetManager();
+                        if (manager == IntPtr.Zero) { Console.WriteLine("[rgpush] no manager"); break; }
+                        YgomSystem.UI.ViewControllerManager.PushChildViewController(manager, splitted[1]);
+                        Console.WriteLine("[rgpush] pushed " + splitted[1]);
+                    }
+                    break;
+                case "rgproof":// dev spike: inject bg + card image into current top VC. Usage: rgproof [cid]
+                    {
+                        int cid = 4007;
+                        if (splitted.Length > 1 && int.TryParse(splitted[1], out int proofCid)) cid = proofCid;
+                        RoguelikeUiProof.Run(cid);
+                    }
+                    break;
                 case "pvpops":// Generates enum for YgoMaster.PvpOperation
                     {
                         using (TextWriter tw = File.CreateText(Path.Combine(Program.CurrentDir, "PvpOps.txt")))
