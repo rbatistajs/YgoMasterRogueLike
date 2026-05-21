@@ -74,5 +74,53 @@ namespace YgoMasterClient
             }
             catch (Exception ex) { Console.WriteLine("[Roguelike] offer names EX: " + ex); return new string[0]; }
         }
+
+        // One offered deck (name + boss card + description + card-id lists).
+        public class DeckOffer
+        {
+            public string Name = "Deck";
+            public int BossCard;
+            public string Description = "";
+            public List<int> Main = new List<int>();
+            public List<int> Extra = new List<int>();
+            public List<int> Side = new List<int>();
+        }
+
+        // Full detail of the (up to 3) pending offers, read from $.Roguelike.deckOffers.
+        public static List<DeckOffer> GetDeckOffers()
+        {
+            List<DeckOffer> result = new List<DeckOffer>();
+            try
+            {
+                string json = YgomSystem.Utility.ClientWork.SerializePath("Roguelike.deckOffers");
+                if (string.IsNullOrEmpty(json)) return result;
+                List<object> list = MiniJSON.Json.Deserialize(json) as List<object>;
+                if (list == null) return result;
+                foreach (object o in list)
+                {
+                    Dictionary<string, object> d = o as Dictionary<string, object>;
+                    if (d == null) continue;
+                    DeckOffer offer = new DeckOffer
+                    {
+                        Name = d.ContainsKey("name") ? Convert.ToString(d["name"]) : "Deck",
+                        BossCard = d.ContainsKey("bossCard") ? Convert.ToInt32(d["bossCard"]) : 0,
+                        Description = d.ContainsKey("description") ? Convert.ToString(d["description"]) : "",
+                    };
+                    ReadIds(d, "main", offer.Main);
+                    ReadIds(d, "extra", offer.Extra);
+                    ReadIds(d, "side", offer.Side);
+                    result.Add(offer);
+                }
+            }
+            catch (Exception ex) { Console.WriteLine("[Roguelike] GetDeckOffers EX: " + ex); }
+            return result;
+        }
+
+        static void ReadIds(Dictionary<string, object> d, string key, List<int> into)
+        {
+            List<object> arr = d.ContainsKey(key) ? d[key] as List<object> : null;
+            if (arr == null) return;
+            foreach (object v in arr) { try { into.Add(Convert.ToInt32(v)); } catch { } }
+        }
     }
 }
