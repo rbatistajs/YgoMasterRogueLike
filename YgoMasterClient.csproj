@@ -72,6 +72,7 @@
     <Compile Include="YgoMasterClient\Goat\RushRitualIcon.cs" />
     <Compile Include="YgoMasterClient\Goat\RushLegendLimit.cs" />
     <Compile Include="YgoMasterClient\Goat\RushLegendBadge.cs" />
+    <Compile Include="YgoMasterClient\Roguelike\RoguelikeApi.cs" />
     <Compile Include="YgoMasterClient\SoundInterceptor.cs" />
     <Compile Include="YgoMasterClient\TradeUtils.cs" />
     <Compile Include="YgoMasterClient\ClientSettings.Text.cs" />

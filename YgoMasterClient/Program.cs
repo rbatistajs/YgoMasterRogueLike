@@ -336,6 +336,7 @@ namespace YgoMasterClient
                 nativeTypes.Add(typeof(RushRitualToExtraDeck));
                 nativeTypes.Add(typeof(RushRitualIcon));
                 nativeTypes.Add(typeof(RushLegendBadge));
+                nativeTypes.Add(typeof(RoguelikeApi));
                 nativeTypes.Add(typeof(YgomGame.Duel.DuelTutorialSetting));
                 nativeTypes.Add(typeof(YgomGame.Tutorial.CardFlyingViewController));
                 nativeTypes.Add(typeof(YgomGame.Utility.ItemUtil));
