@@ -747,6 +747,28 @@ namespace YgoMasterClient
                 case "validatecardimages":// Dump cards sem imagem (bundle ou disco) — só roda depois do menu carregar
                     CardImageValidator.Run();
                     break;
+                case "islegend":// Calls DLL_CardIsLegend(cid) — só depois do duel data carregar
+                    if (splitted.Length < 2 || !int.TryParse(splitted[1], out int legCid))
+                        Console.WriteLine("usage: islegend <cid>");
+                    else
+                        Console.WriteLine("[islegend] cid=" + legCid + " legend=" + DuelDll.CardIsLegend(legCid));
+                    break;
+                case "islegendall":// Walks all cids in CardRare and logs those the engine flags as Legend
+                    {
+                        string legJson = YgomSystem.Utility.ClientWork.SerializePath("$.Master.CardRare");
+                        if (string.IsNullOrEmpty(legJson)) { Console.WriteLine("[islegendall] CardRare not loaded yet"); break; }
+                        Dictionary<string, object> legCardRare = MiniJSON.Json.Deserialize(legJson) as Dictionary<string, object>;
+                        if (legCardRare == null) { Console.WriteLine("[islegendall] parse failed"); break; }
+                        int legScanned = 0, legHits = 0;
+                        foreach (string key in legCardRare.Keys)
+                        {
+                            if (!int.TryParse(key, out int legAllCid)) continue;
+                            legScanned++;
+                            if (DuelDll.CardIsLegend(legAllCid)) { legHits++; Console.WriteLine("[islegendall] LEGEND cid=" + legAllCid); }
+                        }
+                        Console.WriteLine("[islegendall] scanned=" + legScanned + " hits=" + legHits);
+                    }
+                    break;
                 case "cardswithart":// List all cards with art (requires setup of YgoMaster/Data/CardData/)
                     {
                         HashSet<int> missingCardsWithArt = new HashSet<int>();

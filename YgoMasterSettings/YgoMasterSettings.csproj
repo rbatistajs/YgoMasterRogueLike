@@ -66,7 +66,6 @@
     <Compile Include="Util\JsonFileWriter.cs" />
     <Compile Include="Util\ContainerInstaller.cs" />
     <Compile Include="Util\CardSameLookup.cs" />
-    <Compile Include="Util\CardLegendStore.cs" />
     <Compile Include="Util\PropWriter.cs" />
     <!-- Dialogs (modais que tabs disparam) -->
     <Compile Include="Dialogs\GridGateSchema.cs" />

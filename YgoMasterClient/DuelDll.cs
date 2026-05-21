@@ -125,6 +125,9 @@ namespace YgoMasterClient
         delegate void Del_DLL_SetAddRecordDelegate(Del_AddRecord addRecord);
         static Del_DLL_SetAddRecordDelegate DLL_SetAddRecordDelegate;
 
+        delegate int Del_DLL_CardIsLegend(int cardId);
+        static Del_DLL_CardIsLegend DLL_CardIsLegend;
+
         static DuelDll()
         {
             IL2Assembly assembly = Assembler.GetAssembly("Assembly-CSharp");
@@ -167,6 +170,17 @@ namespace YgoMasterClient
             DLL_DuelComDebugCommand = Utils.GetFunc<Del_DLL_DuelComDebugCommand>(PInvoke.GetProcAddress(lib, "DLL_DuelComDebugCommand"));
 
             DLL_SetAddRecordDelegate = Utils.GetFunc<Del_DLL_SetAddRecordDelegate>(PInvoke.GetProcAddress(lib, "DLL_SetAddRecordDelegate"));
+
+            DLL_CardIsLegend = Utils.GetFunc<Del_DLL_CardIsLegend>(PInvoke.GetProcAddress(lib, "DLL_CardIsLegend"));
+        }
+
+        // True when the engine flags this cid as Legend (reads the CARD_Prop PropB
+        // bit). DLL_CardIsLegend is exported by duel.dll but the game never declared
+        // the extern (its IL2CPP IsLegend is a stub returning false), so this raw
+        // export is the only way to reach it.
+        public static bool CardIsLegend(int cardId)
+        {
+            return DLL_CardIsLegend != null && DLL_CardIsLegend(cardId) != 0;
         }
 
         static void Log(string str)

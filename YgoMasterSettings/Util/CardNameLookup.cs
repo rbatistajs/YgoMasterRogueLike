@@ -25,6 +25,32 @@ namespace YgoMasterSettings.Util
         public CardIcon  Icon  { get { return (CardIcon)((PropB >> (9 + 9)) & 0x7); } }
         public int       Type  { get { return (PropB >> (9 + 9 + 3)) & 0x1F; } }
 
+        // Legend flag the duel.dll reads (PropB mask 0x78000000). Source of
+        // truth for Legend status — replaces the old CardLegend.json sidecar.
+        public bool      IsLegend { get { return (PropB & 0x78000000) != 0; } }
+
+        // Any card can be flagged Legend EXCEPT pendulums: their scale lives in
+        // PropB bits 26-29, which overlaps the Legend mask (0x78000000), so the
+        // bit would change the scale instead of flagging Legend.
+        public bool      IsLegendCapable
+        {
+            get
+            {
+                switch (Kind)
+                {
+                    case CardKind.Pend:       case CardKind.PendFx:
+                    case CardKind.PendTuner:  case CardKind.PendFlip:
+                    case CardKind.PendNTuner: case CardKind.PendSpirit:
+                    case CardKind.XyzPend:    case CardKind.SyncPend:
+                    case CardKind.FusionPend: case CardKind.SpPend:
+                    case CardKind.RitualPend:
+                        return false;
+                    default:
+                        return true;
+                }
+            }
+        }
+
         // Frame mirror enxuto do GameCardInfo.Frame (cobre os casos
         // comuns; Token/God variants caem em Normal/Effect).
         public CardFrame Frame

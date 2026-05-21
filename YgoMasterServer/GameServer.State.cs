@@ -69,7 +69,6 @@ namespace YgoMaster
         Dictionary<string, object> Regulation;
         Dictionary<string, object> RegulationIcon;
         Dictionary<string, object> RegulationInfo;
-        HashSet<int> CardLegend = new HashSet<int>();
         Dictionary<string, object> AccessorySet;
         Dictionary<int, CardFileData> CardFiles;
         Dictionary<string, object> RawCardFilesData;
@@ -639,22 +638,6 @@ namespace YgoMaster
             if (File.Exists(TitleLoopFile))
             {
                 TitleLoop = MiniJSON.Json.DeserializeStripped(File.ReadAllText(TitleLoopFile)) as Dictionary<string, object>;
-            }
-
-            string cardLegendFile = Path.Combine(dataDirectory, "CardLegend.json");
-            if (File.Exists(cardLegendFile))
-            {
-                Dictionary<string, object> doc =
-                    MiniJSON.Json.Deserialize(File.ReadAllText(cardLegendFile)) as Dictionary<string, object>;
-                List<object> list = doc != null
-                    ? Utils.GetValue<List<object>>(doc, "legends") : null;
-                if (list != null)
-                {
-                    foreach (object o in list)
-                    {
-                        try { CardLegend.Add(Convert.ToInt32(o)); } catch { }
-                    }
-                }
             }
 
             string regulationFile = Path.Combine(dataDirectory, "Regulation.json");

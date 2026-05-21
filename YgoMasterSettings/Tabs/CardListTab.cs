@@ -59,9 +59,8 @@ namespace YgoMasterSettings.Tabs
         Dictionary<int, int> _sameResolvedCache = new Dictionary<int, int>();
         bool _sameDirty;
 
-        // CardLegend.json — flag por cid (Rush Legend cards). Validation
-        // "1 por Type no deck" roda no client (Goat hook). Aqui só UI.
-        CardLegendStore _legendStore;
+        // Legend flag lives in CARD_Prop (PropB bit, via PropWriter). The "1 per
+        // Type" rule runs on the client (Goat hook reading DLL_CardIsLegend).
         string _legendFilter = "any";   // any | yes | no
         // Todas as regulations descobertas em Regulation.json (Goat,
         // Rush, Normal, Fusion, Synchro, Xyz, Link, Unlimited, etc.).
@@ -198,7 +197,6 @@ namespace YgoMasterSettings.Tabs
             _cards   = CardNameLookup.LoadFull(_dataDir);
             _formats = FormatPools.LoadAll(_dataDir);
             _sameLookup = new CardSameLookup(_dataDir);
-            _legendStore = new CardLegendStore(_dataDir);
             _sameResolvedCache = _sameLookup.ResolveAll();
             // Carrega Regulation.json raw (preserva campos desconhecidos
             // e require/etc no save). Mutated em OnLimitChanged.
@@ -777,9 +775,8 @@ namespace YgoMasterSettings.Tabs
         {
             int textCount = _editedTexts.Count;
             int propCount = _propEdits.Count;
-            bool legendDirty = _legendStore != null && _legendStore.IsDirty;
             bool hasRarity = _dirty;
-            bool any = hasRarity || textCount > 0 || _sameDirty || propCount > 0 || legendDirty;
+            bool any = hasRarity || textCount > 0 || _sameDirty || propCount > 0;
             _btnSave.Enabled = any && !_saving;
 
             if (!any)
@@ -792,7 +789,6 @@ namespace YgoMasterSettings.Tabs
             if (textCount > 0) parts.Add(textCount + " texto" + (textCount == 1 ? "" : "s"));
             if (_sameDirty) parts.Add("CARD_Same");
             if (propCount > 0) parts.Add(propCount + " prop" + (propCount == 1 ? "" : "s"));
-            if (legendDirty) parts.Add("Legends");
             _lblDirty.Text = "* pendente: " + string.Join(" + ", parts);
         }
 
@@ -1090,7 +1086,8 @@ namespace YgoMasterSettings.Tabs
             }
             if (_legendFilter != "any")
             {
-                bool isL = _legendStore != null && _legendStore.IsLegend(cid);
+                CardInfo li;
+                bool isL = _cards.TryGetValue(cid, out li) && li.IsLegend;
                 if (_legendFilter == "yes" && !isL) return false;
                 if (_legendFilter == "no"  &&  isL) return false;
             }
@@ -1253,7 +1250,7 @@ namespace YgoMasterSettings.Tabs
                     sameCidStr = canon.ToString();
                 object kindVal = info != null ? (object)(int)info.Kind : DBNull.Value;
                 object iconVal = info != null ? (object)(int)info.Icon : DBNull.Value;
-                bool isLegend = _legendStore != null && _legendStore.IsLegend(cid);
+                bool isLegend = info != null && info.IsLegend;
                 int idx = _grid.Rows.Add(cid, name, isLegend, sameCidStr, typeStr, kindVal, frameStr, iconVal,
                                           attrStr, lvlStr, atkStr, defStr,
                                           FormatTagOf(cid), limitVal, rarityVal, !isDeact);
@@ -1378,8 +1375,7 @@ namespace YgoMasterSettings.Tabs
             bool hasRarity = _dirty;
             int textCount = _editedTexts.Count;
             int propCount = _propEdits.Count;
-            bool legendDirty = _legendStore != null && _legendStore.IsDirty;
-            if (!hasRarity && textCount == 0 && !_sameDirty && propCount == 0 && !legendDirty)
+            if (!hasRarity && textCount == 0 && !_sameDirty && propCount == 0)
             {
                 MessageBox.Show("Nada pra salvar.", "OK", MessageBoxButtons.OK,
                     MessageBoxIcon.Information);
@@ -1413,7 +1409,6 @@ namespace YgoMasterSettings.Tabs
                 textCount > 0 ? new Dictionary<int, CardTextWriter.Edit>(_editedTexts) : null;
             Dictionary<int, PropWriter.Edit> propEditsClone =
                 _propEdits.Count > 0 ? new Dictionary<int, PropWriter.Edit>(_propEdits) : null;
-            bool legendDirtySnapshot = _legendStore != null && _legendStore.IsDirty;
 
             BeginSaveUi();
 
@@ -1446,12 +1441,6 @@ namespace YgoMasterSettings.Tabs
                     {
                         res.PropSlots = PropWriter.Save(_dataDir, propEditsClone, ReportProgress);
                     }
-                    if (legendDirtySnapshot)
-                    {
-                        ReportProgress("Salvando CardLegend.json…");
-                        _legendStore.Save();
-                        res.LegendSaved = true;
-                    }
                     if (res.SlotsRewritten > 0 || res.SameSaved || res.PropSlots > 0)
                     {
                         ReportProgress("Instalando nos containers do jogo…");
@@ -1471,7 +1460,6 @@ namespace YgoMasterSettings.Tabs
             public int SlotsRewritten;
             public bool SameSaved;
             public int PropSlots;
-            public bool LegendSaved;
             public ContainerInstaller.Result InstallResult;
             public Exception Error;
         }
@@ -1576,7 +1564,6 @@ namespace YgoMasterSettings.Tabs
             if (res.SameSaved) parts.Add("CARD_Same.bytes");
             if (res.PropSlots > 0)
                 parts.Add("CARD_Prop.bytes (" + res.PropSlots + " edits)");
-            if (res.LegendSaved) parts.Add("CardLegend.json");
             if (res.InstallResult != null && res.InstallResult.OkCount > 0)
                 parts.Add("Game containers (" + res.InstallResult.OkCount + ")");
             MessageBox.Show("Salvo: " + string.Join(", ", parts) +
@@ -1809,7 +1796,31 @@ namespace YgoMasterSettings.Tabs
             bool checkedVal;
             try { checkedVal = Convert.ToBoolean(row.Cells["legend"].Value); }
             catch { return; }
-            if (_legendStore.SetLegend(cid, checkedVal)) UpdateDirtyLabel();
+
+            CardInfo info;
+            _cards.TryGetValue(cid, out info);
+            if (info == null) return;
+
+            // Any card can be Legend except pendulums: their scale (PropB bits
+            // 26-29) overlaps the Legend mask, so the bit would change the scale
+            // instead of flagging Legend. Revert the checkbox.
+            if (checkedVal && !info.IsLegendCapable)
+            {
+                row.Cells["legend"].Value = false;
+                MessageBox.Show("Cards Pêndulo não podem ser Legend (o bit colide com o scale).",
+                    "Legend", MessageBoxButtons.OK, MessageBoxIcon.Information);
+                return;
+            }
+
+            PropWriter.Edit ed;
+            if (!_propEdits.TryGetValue(cid, out ed))
+            {
+                ed = new PropWriter.Edit();
+                _propEdits[cid] = ed;
+            }
+            ed.Legend = info.IsLegend == checkedVal ? (bool?)null : checkedVal;
+            if (ed.Kind == null && ed.Icon == null && ed.Legend == null) _propEdits.Remove(cid);
+            UpdateDirtyLabel();
         }
 
         void OnGridPropChanged(int rowIndex, string colName)
@@ -1841,7 +1852,7 @@ namespace YgoMasterSettings.Tabs
                 if ((int)info.Icon == newVal) { ed.Icon = null; }
                 else ed.Icon = (CardIcon)newVal;
             }
-            if (ed.Kind == null && ed.Icon == null) _propEdits.Remove(cid);
+            if (ed.Kind == null && ed.Icon == null && ed.Legend == null) _propEdits.Remove(cid);
             UpdateDirtyLabel();
         }
 

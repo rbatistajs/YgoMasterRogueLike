@@ -6,18 +6,25 @@ using YgoMaster;
 namespace YgoMasterSettings.Util
 {
     // In-place edits a CARD_Prop.bytes file: per-cid overrides for Kind
-    // (PropA bits 16-21) and Icon (PropB bits 18-20). Other bits are
-    // preserved so ATK/DEF/Level/Attr/Type/Scale stay intact.
+    // (PropA bits 16-21), Icon (PropB bits 18-20) and the Legend flag
+    // (PropB mask 0x78000000). Other bits are preserved so ATK/DEF/Level/
+    // Attr/Type/Scale stay intact.
     //
     // Slot format (8 bytes/slot, little-endian uint32 + uint32):
     //   PropA: [cid 16][kind 6][attr 4][level 4][unused 2]
     //   PropB: [atk 9][def 9][icon 3][type 5][scale 4][exist 1][unused 1]
     static class PropWriter
     {
+        // Legend flag the native duel.dll reads via DLL_CardIsLegend. We set
+        // bit 27 to mark; clearing wipes the whole mask so no bit leaks.
+        const uint LegendMask = 0x78000000u;
+        const uint LegendSetBit = 0x08000000u;
+
         public class Edit
         {
             public CardKind? Kind;
             public CardIcon? Icon;
+            public bool? Legend;
         }
 
         public static int Save(string dataDir, Dictionary<int, Edit> edits,
@@ -48,6 +55,10 @@ namespace YgoMasterSettings.Util
                 if (ed.Icon.HasValue)
                 {
                     b = (b & ~(0x7u << 18)) | (((uint)ed.Icon.Value & 0x7) << 18);
+                }
+                if (ed.Legend.HasValue)
+                {
+                    b = ed.Legend.Value ? (b | LegendSetBit) : (b & ~LegendMask);
                 }
                 data[off]   = (byte)(a & 0xFF);
                 data[off+1] = (byte)((a >> 8) & 0xFF);

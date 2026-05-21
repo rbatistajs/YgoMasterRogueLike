@@ -1,5 +1,6 @@
 // Show a "Legend" badge ("L" icon) on any DeckCard-style thumbnail when the
-// cid (or a CARD_Same variant) is in CardLegend.json.
+// native engine flags the cid as Legend (DuelDll.CardIsLegend, which reads the
+// bit baked into CARD_Prop — variants included).
 //
 // Two injection paths:
 //   1. Prefab pre-injection — for DeckEditCard, the IconLegend child is added
@@ -11,7 +12,6 @@
 //      it isn't a prefab being cloned) and cached for subsequent toggles.
 
 using System;
-using System.IO;
 using IL2CPP;
 using UnityEngine;
 using YgoMaster;
@@ -26,7 +26,7 @@ namespace YgoMasterClient
     {
         const string LegendChildName = "IconLegend";
         const string TemplateChildName = "IconLimit";
-        const string SpritePath = "Images/legend_icon.png";
+        const string SpriteAssetPath = "Images/legend_icon";
 
         delegate void Del_DeckViewAwake(IntPtr thisPtr);
         delegate void Del_SetData(IntPtr thisPtr, ref CardBaseData baseData, int regulationID, int mode);
@@ -63,13 +63,6 @@ namespace YgoMasterClient
                 // 7-param one (CardBaseData, int, int, bool, bool, bool, bool).
                 IL2Method onDetailSetCard = cardDetailViewClass?.GetMethod("SetCard",
                     m => m.GetParameters().Length == 7);
-                Console.WriteLine("[RushLegendBadge] DeckView=" + (deckViewClass != null)
-                    + " template=" + (_fieldTemplate != null)
-                    + " Awake=" + (onAwake != null));
-                Console.WriteLine("[RushLegendBadge] DeckEditCard=" + (deckEditCardClass != null)
-                    + " SetData=" + (onSetData != null));
-                Console.WriteLine("[RushLegendBadge] CardDetailView=" + (cardDetailViewClass != null)
-                    + " SetCard(7p)=" + (onDetailSetCard != null));
                 if (_fieldTemplate == null || onAwake == null || onSetData == null
                     || onDetailSetCard == null || _imageSetSprite == null)
                 {
@@ -80,7 +73,6 @@ namespace YgoMasterClient
                 _hookAwake         = new Hook<Del_DeckViewAwake>(OnDeckViewAwake, onAwake);
                 _hookSetData       = new Hook<Del_SetData>(OnSetData, onSetData);
                 _hookDetailSetCard = new Hook<Del_DetailSetCard>(OnDetailSetCard, onDetailSetCard);
-                Console.WriteLine("[RushLegendBadge] 3 hooks installed");
             }
             catch (Exception ex)
             {
@@ -101,20 +93,12 @@ namespace YgoMasterClient
             ToggleBadge(ComponentRef.GetGameObject(card), data.CardID);
         }
 
-        static int _detailLogCount;
         static void OnDetailSetCard(IntPtr detailView, ref CardBaseData data,
             int a, int b, csbool c, csbool d, csbool e, csbool f)
         {
             _hookDetailSetCard.Original(detailView, ref data, a, b, c, d, e, f);
             IntPtr windowGo = ComponentRef.GetGameObject(detailView);
             IntPtr cardAreaGo = GameObject.FindGameObjectByName(windowGo, "CardArea");
-            if (_detailLogCount < 5)
-            {
-                _detailLogCount++;
-                Console.WriteLine("[RushLegendBadge] DetailSetCard cid=" + data.CardID
-                    + " window=" + (windowGo != IntPtr.Zero)
-                    + " cardArea=" + (cardAreaGo != IntPtr.Zero));
-            }
             if (cardAreaGo == IntPtr.Zero) return;
             ToggleBadge(cardAreaGo, data.CardID);
         }
@@ -125,7 +109,7 @@ namespace YgoMasterClient
         static void ToggleBadge(IntPtr go, int cardId)
         {
             if (go == IntPtr.Zero) return;
-            bool isLegend = cardId > 0 && RushLegendLimit.IsLegendVariantPublic(cardId);
+            bool isLegend = cardId > 0 && DuelDll.CardIsLegend(cardId);
             IntPtr badge = GameObject.FindGameObjectByName(go, LegendChildName);
             if (badge == IntPtr.Zero && isLegend)
                 badge = CreateBadge(go);
@@ -166,20 +150,21 @@ namespace YgoMasterClient
             return clone;
         }
 
+        // Loads the badge icon through the game's ResourceManager (same pattern as
+        // SoloChapterCardImage): the AssetHelper Load hook serves our custom PNG
+        // (ClientData/Images/legend_icon.png) and the ResourceManager owns the
+        // texture, so Unity won't unload it on deck/scene transitions. Only the
+        // sprite we create needs anchoring.
         static IntPtr LoadSprite()
         {
             if (_cachedSprite != IntPtr.Zero) return _cachedSprite;
-            string path = Path.Combine(Program.ClientDataDir, SpritePath);
-            if (!File.Exists(path)) return IntPtr.Zero;
-            IntPtr texture = AssetHelper.TextureFromPNG(path, "legend_icon");
+            IntPtr texture = AssetHelper.LoadImmediateAsset(SpriteAssetPath);
             if (texture == IntPtr.Zero) return IntPtr.Zero;
             IntPtr sprite = AssetHelper.SpriteFromTexture(texture, "legend_icon",
                 default(AssetHelper.Rect), 100);
             if (sprite == IntPtr.Zero) return IntPtr.Zero;
-            // Pin both texture and sprite so Unity's asset manager doesn't
-            // unload them when switching scenes / scrolling deck lists.
-            Import.Handler.il2cpp_gchandle_new(texture, true);
             Import.Handler.il2cpp_gchandle_new(sprite, true);
+            UnityObjectRef.DontDestroyOnLoad(sprite);
             _cachedSprite = sprite;
             return _cachedSprite;
         }
