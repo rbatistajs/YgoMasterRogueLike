@@ -16,6 +16,7 @@ YgoMaster/*.exe
 YgoMaster/*.dll
 YgoMaster/Ultralight
 masterduel_Data/*
+_tmp/
 
 # User-specific files
 *.rsuser

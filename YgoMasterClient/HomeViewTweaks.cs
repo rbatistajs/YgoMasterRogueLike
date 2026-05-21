@@ -75,6 +75,8 @@ namespace YgoMasterClient
                 return;
             }
 
+            RoguelikeHomeButton.OnHomeUpdate(thisPtr);
+
             if (ClientSettings.HomeDisableUnusedTopics || ClientSettings.HomeDisableUnusedBanners)
             {
                 IntPtr obj = Component.GetGameObject(thisPtr);
