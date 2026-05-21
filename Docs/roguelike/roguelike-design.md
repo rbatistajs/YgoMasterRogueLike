@@ -285,3 +285,69 @@ deck reabre a tela.
 > Pendências (não bloqueiam): `boss_card` por deck nas StartingDecks (Buster Blader/Cat
 > Control caem no mesmo cid 5655 = 1º id do main); painel lateral de descrição do viewer
 > (`shortcutSettings`); fundo `Base` do RecommendGroup escondido (revisitar o painel).
+
+---
+
+## M3 — Mapa (spec)
+
+Objetivo: **gerar** (server, seedado) + **renderizar** (tela custom) + **navegar** um mapa
+estilo **Slay-the-Spire**. Layout configurável via `DataLE/Roguelike/Settings.json`, com
+classe abstrata extensível pra outros formatos depois (multi-parent, sem o limite de 1 pai
+do Goat).
+
+### Config: `DataLE/Roguelike/Settings.json` (data-driven, editável sem recompilar)
+```json
+{
+  "layout": "slay_the_spire",
+  "floors": 8,
+  "width": 4,
+  "typeWeights": { "duel": 0.6, "elite": 0.12, "event": 0.12, "shop": 0.08, "reward": 0.08 }
+}
+```
+- `layout` escolhe a impl (factory). `floors`/`width`/`typeWeights` são params do layout.
+  `duel` é forçado na fileira 0; `boss` é fixo no topo. Defaults no código se o arquivo
+  faltar.
+
+### Modelo (`roguelike.json`, adições)
+```json
+"map": { "nodes": [ {"id":0,"type":"duel","row":0,"col":1,"next":[3,4]}, ... ], "rows": 8 },
+"position": null,     // id do nó atual (null = na entrada, antes da fileira 0)
+"visited": []         // ids já percorridos
+```
+Multi-parent é natural: vários nós podem listar o mesmo id em `next`.
+
+### Geração (server, `Roguelike/`)
+- `RoguelikeSettings` — lê/cacheia `DataLE/Roguelike/Settings.json` (defaults se ausente).
+- `RoguelikeMapLayout` (abstrata): `Build(seed, settings) → RoguelikeMap`; factory
+  `Create(settings.layout)`.
+- `SlayTheSpireLayout : RoguelikeMapLayout` (1ª impl): N andares × até W nós, arestas
+  andar→andar (1-2 por nó, conectividade garantida, sem cruzamento de linhas), boss no
+  topo, fileira 0 = entrada, tipos por `typeWeights`.
+- Gerado no `choose_deck` (usa o `seed` da run → determinístico).
+
+### Tipos de nó (M3 = só visual; ações no M4+)
+`duel, elite, event, shop, reward, boss` — ícone/cor por tipo. Clicar num nó alcançável só
+**move** (marca visitado, revela vizinhos).
+
+### Acts (server)
+- `Roguelike.move { nodeId }` — valida (conectado ao atual + alcançável) → atualiza
+  `position`/`visited` → responde estado.
+
+### Client — tela custom (`RoguelikeMapScreen`)
+- Empurra uma base + constrói os **nós** (posicionados por row/col, de baixo pra cima) +
+  **linhas** entre conectados (Image fino rotacionado) + destaca o atual + clicáveis = os
+  próximos alcançáveis. Click → `move` → re-renderiza.
+- Nós = ícone/cor por tipo (v1 simples). Reaproveita os padrões do M2.5 (push base + clonar
+  GameObjects + onClick via `_UnityAction`).
+
+### Navegação
+- Início: `position=null` → toda a fileira 0 alcançável. De um nó: alcançáveis = seus
+  `next`. Sem voltar. Chegar no boss (topo) = fim do mapa (vitória da run vem no M7).
+
+### Fora do M3
+Ações dos nós (M4: duelo/reward), gating do boss por 2/3 elites (M7), loja/eventos (M8).
+
+### Pronto quando (M3)
+Escolher o deck gera o mapa; "Continuar" abre a tela do mapa (StS) reaproveitando a base;
+dá pra navegar de baixo até o boss com `position`/`visited` persistidos; trocar o
+`Settings.json` (ex.: `floors`/`width`/`typeWeights`) muda o layout sem recompilar.
