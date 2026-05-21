@@ -41,7 +41,7 @@ Numa run:
 
 | # | Subsistema | Depende de |
 |---|---|---|
-| **M1** | Fundação: modelo+persistência da run, Acts, botão Home, overlay de entrada (Nova/Continuar/Abandonar) | — |
+| **M1** ✅ | Fundação: modelo+persistência da run, Acts, botão Home, overlay de entrada (Nova/Continuar/Abandonar) | — |
 | M2 | Início de run: pool de decks iniciais + escolher 1 de 3 | M1 |
 | M3 | Mapa: grid próprio + UI do mapa + tipos de node + navegação | M1, M2 |
 | M4 | Duelo + reward básico: iniciar duelo do node, vitória/derrota, moeda, avançar | M3 |
@@ -116,3 +116,78 @@ loja/eventos (M8). Nova/Continuar levam a placeholders no M1.
 ### Pronto quando (M1)
 Da Home: clicar Roguelike abre o overlay; "Nova Run" cria e persiste `roguelike.json`;
 reabrir mostra "Continuar"/"Abandonar" habilitados; "Abandonar" limpa o estado.
+
+> **M1 concluído (2026-05-21).** Implementado com ActionSheet/CommonDialog (em vez do
+> overlay custom) — pragmático e reaproveitável. O modo segue com ActionSheet até a UI
+> do mapa (M3), quando construiremos telas mais ricas.
+
+---
+
+## M2 — Início de run: escolher 1 de 3 decks (spec)
+
+Objetivo: ao iniciar uma run `base_deck`, o **server sorteia 3 decks** de um pool e o
+jogador **escolhe 1**, que vira o deck da run (persistido). Reaproveita
+ActionSheet/CommonDialog do M1. Sem arte de carta ainda (vem com a UI do mapa).
+
+### Fluxo
+```
+Home → botão "ROGUELIKE" → menu:
+  - Sem run:                 "Nova Run" → start_run (server sorteia 3)
+                               → ActionSheet "Escolha seu deck" [Deck A / B / C]
+                               → tap → choose_deck(i) → toast "Deck: X"
+  - Run sem deck (deckChosen=false): "Continuar Run" reabre a seleção (resumível)
+  - Run com deck:            "Continuar Run" → toast "Run em andamento (mapa: M3)"
+                             "Abandonar Run" → confirma → abandon_run
+```
+
+### Pool de decks
+- Fonte: `DataLE/decks/normal/{0..6}/*.json` (formato player; já existe, usado pelas
+  Solo gates). Para `base_deck` o pool de starters é o `normal` inteiro (todos os tiers).
+- Seleção: RNG semeado pelo `seed` da run → 3 arquivos distintos; carregados via
+  `DeckPoolLoader.LoadOne`. `file` salvo como caminho relativo ao `dataDirectory`.
+
+### Modelo (`roguelike.json`, adições ao M1)
+```json
+{
+  "version": 1, "active": true, "gameType": "base_deck", "seed": 123, "createdAt": "...",
+  "deckChosen": false,
+  "deckOffers": [
+    {"name":"Goat Control","bossCard":12345,"file":"decks/normal/2/Goat Control.json"},
+    {"name":"Chaos Turbo","bossCard":67890,"file":"decks/normal/1/Chaos Turbo.json"},
+    {"name":"Warrior","bossCard":11111,"file":"decks/normal/3/Warrior.json"}
+  ],
+  "deck": null
+}
+```
+- `deckChosen=false`: `deckOffers` tem 3, `deck=null`.
+- Após `choose_deck`: `deck` = `{name, bossCard, deck:{Main,Extra,Side}}` (pronto pro
+  `DuelSettings` no M4); `deckOffers` esvaziado.
+
+### Acts (server)
+- `start_run` (evolui): cria run `active`, `deckChosen=false`, sorteia `seed` + 3 offers,
+  persiste, responde o estado (com offers).
+- `choose_deck { index }` (novo): valida `0..2` e run pendente; `LoadOne(offers[index].file)`
+  → grava `deck`, `deckChosen=true`, limpa offers; responde estado. Idempotente (se já
+  escolhido, no-op).
+- `abandon_run`: inalterado.
+- get_state (home piggyback): inclui `deckChosen`, `deck` (name/bossCard), `deckOffers`.
+
+### Client
+- `RoguelikeApi`: + `IsDeckChosen()`, `GetDeckOfferNames()` (lê `$.Roguelike.deckOffers`
+  via `ClientWork.SerializePath`), `ChooseDeck(int index)` (act `choose_deck`).
+- Reação assíncrona: `RoguelikeFlow.OnNetworkComplete(cmd)` chamado do hook
+  `RequestStructure.Complete` (`DuelStarter.cs`, junto do `ProfileReplayViewController
+  .OnNetworkComplete`). `start_run` completo → abre ActionSheet de seleção a partir do
+  `$.Roguelike` já atualizado; `choose_deck` completo → toast confirmando.
+- `RoguelikeHomeButton.OnMenuSelect`: "Nova Run" agora só dispara `start_run` (a seleção
+  vem pela completion). "Continuar": se `active && !deckChosen` reabre a seleção; se deck
+  escolhido, toast "mapa: M3".
+
+### Fora do M2 (stubs)
+Mapa (M3), uso do `deck` em duelo (M4). O `deck` salvo só é consumido no M4. UI rica com
+arte de carta fica pra UI do mapa (M3).
+
+### Pronto quando (M2)
+"Nova Run" mostra 3 decks; escolher 1 grava `deck` + `deckChosen=true` no `roguelike.json`;
+reabrir antes de escolher reabre a seleção; após escolher, "Continuar" indica run em
+andamento; "Abandonar" limpa tudo.
