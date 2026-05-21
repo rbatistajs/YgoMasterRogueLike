@@ -44,5 +44,35 @@ namespace YgoMasterClient
 
         public static void StartRun() { Call("Roguelike.start_run"); }
         public static void AbandonRun() { Call("Roguelike.abandon_run"); }
+        public static void ChooseDeck(int index)
+        {
+            Call("Roguelike.choose_deck", new Dictionary<string, object> { { "index", index } });
+        }
+
+        // True when the player has finalized a deck for the active run.
+        public static bool IsDeckChosen()
+        {
+            return YgomSystem.Utility.ClientWork.GetByJsonPath<bool>("Roguelike.deckChosen");
+        }
+
+        // Names of the (up to 3) decks offered for the pending run.
+        public static string[] GetDeckOfferNames()
+        {
+            try
+            {
+                string json = YgomSystem.Utility.ClientWork.SerializePath("Roguelike.deckOffers");
+                if (string.IsNullOrEmpty(json)) return new string[0];
+                List<object> list = MiniJSON.Json.Deserialize(json) as List<object>;
+                if (list == null) return new string[0];
+                List<string> names = new List<string>();
+                foreach (object o in list)
+                {
+                    Dictionary<string, object> item = o as Dictionary<string, object>;
+                    names.Add(item != null && item.ContainsKey("name") ? Convert.ToString(item["name"]) : "Deck");
+                }
+                return names.ToArray();
+            }
+            catch (Exception ex) { Console.WriteLine("[Roguelike] offer names EX: " + ex); return new string[0]; }
+        }
     }
 }
