@@ -13,6 +13,7 @@ namespace YgoMaster
         {
             public string Name;                       // file name (no extension)
             public int BossCard;
+            public string Description;                // optional `description` field
             public Dictionary<string, object> Json;   // raw player-format deck dict
         }
 
@@ -33,6 +34,7 @@ namespace YgoMaster
             {
                 Name = Path.GetFileNameWithoutExtension(fullPath),
                 BossCard = ResolveBossCard(doc),
+                Description = Utils.GetValue<string>(doc, "description", ""),
                 Json = doc,
             };
         }

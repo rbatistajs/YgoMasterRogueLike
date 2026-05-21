@@ -64,11 +64,23 @@ namespace YgoMaster
                     offers.Add(new Dictionary<string, object>
                     {
                         { "name", d.Name }, { "bossCard", d.BossCard }, { "file", rel },
+                        { "description", d.Description },
+                        { "main", IdsOf(d.Json, "m") },
+                        { "extra", IdsOf(d.Json, "e") },
+                        { "side", IdsOf(d.Json, "s") },
                     });
                 }
                 catch (Exception ex) { Console.WriteLine("[Roguelike] offer load EX: " + ex.Message); }
             }
             return offers;
+        }
+
+        // Pull the id list of a player-format deck section ("m"/"e"/"s") as a List<object>.
+        static List<object> IdsOf(Dictionary<string, object> deckJson, string section)
+        {
+            Dictionary<string, object> sec = Utils.GetValue<Dictionary<string, object>>(deckJson, section);
+            List<object> ids = sec != null ? Utils.GetValue<List<object>>(sec, "ids") : null;
+            return ids ?? new List<object>();
         }
 
         void Act_RoguelikeChooseDeck(GameServerWebRequest request)
@@ -89,7 +101,8 @@ namespace YgoMaster
                         {
                             run.Deck = new Dictionary<string, object>
                             {
-                                { "name", d.Name }, { "bossCard", d.BossCard }, { "deck", d.Json },
+                                { "name", d.Name }, { "bossCard", d.BossCard },
+                                { "description", d.Description }, { "deck", d.Json },
                             };
                             run.DeckChosen = true;
                             run.DeckOffers = new List<object>();
