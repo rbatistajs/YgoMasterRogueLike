@@ -14,6 +14,9 @@ namespace YgoMaster
         public bool DeckChosen;
         public List<object> DeckOffers;            // each item: {name, bossCard, file}
         public Dictionary<string, object> Deck;    // {name, bossCard, deck:{Main,Extra,Side}} or null
+        public Dictionary<string, object> Map;     // RoguelikeMap.ToDictionary() or null
+        public int Position = -1;                   // current node id (-1 = entry, before row 0)
+        public List<object> Visited;               // ids already walked
 
         public Dictionary<string, object> ToDictionary()
         {
@@ -24,6 +27,9 @@ namespace YgoMaster
                 { "deckChosen", DeckChosen },
                 { "deckOffers", DeckOffers ?? new List<object>() },
                 { "deck", Deck },
+                { "map", Map },
+                { "position", Position },
+                { "visited", Visited ?? new List<object>() },
             };
         }
 
@@ -40,6 +46,9 @@ namespace YgoMaster
                 DeckChosen = Utils.GetValue<bool>(d, "deckChosen", false),
                 DeckOffers = Utils.GetValue<List<object>>(d, "deckOffers"),
                 Deck       = Utils.GetValue<Dictionary<string, object>>(d, "deck"),
+                Map        = Utils.GetValue<Dictionary<string, object>>(d, "map"),
+                Position   = Utils.GetValue<int>(d, "position", -1),
+                Visited    = Utils.GetValue<List<object>>(d, "visited"),
             };
         }
 
