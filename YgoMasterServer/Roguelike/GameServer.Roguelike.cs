@@ -106,6 +106,11 @@ namespace YgoMaster
                             };
                             run.DeckChosen = true;
                             run.DeckOffers = new List<object>();
+                            Dictionary<string, object> settings = RoguelikeSettings.Load(dataDirectory);
+                            RoguelikeMapLayout layout = RoguelikeMapLayout.Create(RoguelikeSettings.Layout(settings));
+                            run.Map = layout.Build((int)run.Seed, settings).ToDictionary();
+                            run.Position = -1;
+                            run.Visited = new List<object>();
                             run.Save(GetPlayerDirectory(request.Player));
                         }
                     }
@@ -113,6 +118,47 @@ namespace YgoMaster
             }
             request.Response["Roguelike"] = run.ToDictionary();
             request.Remove("Roguelike");
+        }
+
+        void Act_RoguelikeMove(GameServerWebRequest request)
+        {
+            RoguelikeRun run = RoguelikeRun.Load(GetPlayerDirectory(request.Player));
+            if (run.Active && run.DeckChosen && run.Map != null)
+            {
+                int target = request.ActParams != null ? Utils.GetValue<int>(request.ActParams, "nodeId", -1) : -1;
+                if (IsReachable(run, target))
+                {
+                    run.Position = target;
+                    if (run.Visited == null) run.Visited = new List<object>();
+                    if (!run.Visited.Contains(target)) run.Visited.Add(target);
+                    run.Save(GetPlayerDirectory(request.Player));
+                }
+            }
+            request.Response["Roguelike"] = run.ToDictionary();
+            request.Remove("Roguelike");
+        }
+
+        // Reachable = entry (-1) -> any node in row 0; otherwise the current node's `next`.
+        static bool IsReachable(RoguelikeRun run, int target)
+        {
+            List<object> nodes = Utils.GetValue<List<object>>(run.Map, "nodes");
+            if (nodes == null) return false;
+            Dictionary<string, object> targetNode = null, currentNode = null;
+            foreach (object o in nodes)
+            {
+                Dictionary<string, object> n = o as Dictionary<string, object>;
+                if (n == null) continue;
+                int id = Utils.GetValue<int>(n, "id", -999);
+                if (id == target) targetNode = n;
+                if (id == run.Position) currentNode = n;
+            }
+            if (targetNode == null) return false;
+            if (run.Position < 0) return Utils.GetValue<int>(targetNode, "row", -1) == 0;
+            if (currentNode == null) return false;
+            List<object> next = Utils.GetValue<List<object>>(currentNode, "next");
+            if (next == null) return false;
+            foreach (object v in next) { try { if (Convert.ToInt32(v) == target) return true; } catch { } }
+            return false;
         }
 
         void Act_RoguelikeAbandonRun(GameServerWebRequest request)

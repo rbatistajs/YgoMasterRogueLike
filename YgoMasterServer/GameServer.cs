@@ -490,6 +490,9 @@ namespace YgoMaster
                                     case "Roguelike.choose_deck":
                                         Act_RoguelikeChooseDeck(gameServerWebRequest);
                                         break;
+                                    case "Roguelike.move":
+                                        Act_RoguelikeMove(gameServerWebRequest);
+                                        break;
                                     default:
                                         Utils.LogInfo("Unhandled act " + actsHeader);
                                         Debug.WriteLine("Unhandled act " + actsHeader + " " + MiniJSON.Json.Serialize(vals));
