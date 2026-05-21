@@ -141,16 +141,23 @@ namespace YgoMasterClient
         {
             if (_menuRunActive)
             {
-                if (index == 0)
-                    YgomGame.Menu.CommonDialogViewController.OpenAlertDialog("Roguelike", "Continuar: o mapa vem no proximo milestone.", () => { });
-                else if (index == 1)
+                if (index == 0) // Continuar Run
+                {
+                    if (!RoguelikeApi.IsDeckChosen())
+                        RoguelikeFlow.OpenDeckSelect();
+                    else
+                        YgomGame.Menu.CommonDialogViewController.OpenAlertDialog("Roguelike",
+                            "Run em andamento - o mapa vem no proximo milestone.", () => { });
+                }
+                else if (index == 1) // Abandonar Run
+                {
                     YgomGame.Menu.CommonDialogViewController.OpenYesNoConfirmationDialog("Abandonar Run",
                         "Tem certeza? A run atual sera perdida.", () => { RoguelikeApi.AbandonRun(); }, () => { });
+                }
             }
-            else if (index == 0)
+            else if (index == 0) // Nova Run
             {
-                RoguelikeApi.StartRun();
-                YgomGame.Menu.CommonDialogViewController.OpenAlertDialog("Roguelike", "Nova run criada!", () => { });
+                RoguelikeApi.StartRun(); // deck-select sheet opens on start_run completion
             }
         }
     }

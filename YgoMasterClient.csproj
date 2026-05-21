@@ -74,6 +74,7 @@
     <Compile Include="YgoMasterClient\Goat\RushLegendBadge.cs" />
     <Compile Include="YgoMasterClient\Roguelike\RoguelikeApi.cs" />
     <Compile Include="YgoMasterClient\Roguelike\RoguelikeDebug.cs" />
+    <Compile Include="YgoMasterClient\Roguelike\RoguelikeFlow.cs" />
     <Compile Include="YgoMasterClient\Roguelike\RoguelikeHomeButton.cs" />
     <Compile Include="YgoMasterClient\SoundInterceptor.cs" />
     <Compile Include="YgoMasterClient\TradeUtils.cs" />

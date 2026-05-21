@@ -441,6 +441,8 @@ namespace YgomSystem.Network
 
                 YgomGame.Menu.ProfileReplayViewController.OnNetworkComplete(thisPtr, cmd);
 
+                YgoMasterClient.RoguelikeFlow.OnNetworkComplete(cmd);
+
                 if (YgomGame.Room.RoomCreateViewController.IsHacked)
                 {
                     switch (cmd)
