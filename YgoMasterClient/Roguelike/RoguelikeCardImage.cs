@@ -6,21 +6,28 @@ using YgoMaster;
 
 namespace YgoMasterClient
 {
-    // Loads card artwork by card id (stock AssetHelper: custom PNG in ClientData, else the
-    // game's bundle which has every card) and attaches it to a UI parent. Sprites are cached
-    // + gc-anchored so Unity doesn't collect them.
+    // Loads card artwork by card id and overlays it onto a UI parent as OUR OWN sprite
+    // (new Sprite via SpriteFromTexture, gc-anchored + DontDestroyOnLoad), so it survives
+    // the game releasing shared card textures (e.g. when the deck viewer closes). Mirrors
+    // Goat's SoloChapterCardImage (not reused): a RectMask2D container + an Img child with
+    // preserveAspect.
     static unsafe class RoguelikeCardImage
     {
         static IntPtr _imageType;
         static IL2Method _imageSetSprite;
         static IL2Property _imagePreserveAspect;
         static IntPtr _rectType;
-        static IL2Property _anchorMin, _anchorMax, _offsetMin, _offsetMax;
-        static IntPtr _rawImageType;
-        static IL2Property _rawImageTexture;
-        static IL2Property _behaviourEnabled;
-        static readonly Dictionary<int, IntPtr> _cache = new Dictionary<int, IntPtr>();
-        static readonly Dictionary<int, IntPtr> _texCache = new Dictionary<int, IntPtr>();
+        static IL2Property _anchorMin, _anchorMax, _offsetMin, _offsetMax, _pivot, _sizeDelta, _anchoredPos3D;
+        static IntPtr _rectMaskType;
+        static IntPtr _canvasGroupType;
+        static IntPtr _aspectFitterType;
+        static IL2Property _aspectFitterMode;
+        static IL2Property _aspectFitterRatio;
+        static IL2Property _texWidth;
+        static IL2Property _texHeight;
+        static readonly Dictionary<int, IntPtr> _spriteCache = new Dictionary<int, IntPtr>();
+        static readonly Dictionary<int, float> _aspectCache = new Dictionary<int, float>();
+        static IntPtr _dontDestroyRoot;
         static bool _ready;
 
         static RoguelikeCardImage()
@@ -32,85 +39,113 @@ namespace YgoMasterClient
                 _imageType = image.IL2Typeof();
                 _imageSetSprite = image.GetProperty("sprite").GetSetMethod();
                 _imagePreserveAspect = image.GetProperty("preserveAspect");
-                IL2Class rawImage = ui.GetClass("RawImage", "UnityEngine.UI");
-                _rawImageType = rawImage.IL2Typeof();
-                _rawImageTexture = rawImage.GetProperty("texture");
+                _rectMaskType = ui.GetClass("RectMask2D", "UnityEngine.UI").IL2Typeof();
+                IL2Class fitter = ui.GetClass("AspectRatioFitter", "UnityEngine.UI");
+                _aspectFitterType = fitter.IL2Typeof();
+                _aspectFitterMode = fitter.GetProperty("aspectMode");
+                _aspectFitterRatio = fitter.GetProperty("aspectRatio");
+
                 IL2Assembly core = Assembler.GetAssembly("UnityEngine.CoreModule");
+                IL2Class texture = core.GetClass("Texture", "UnityEngine");
+                _texWidth = texture.GetProperty("width");
+                _texHeight = texture.GetProperty("height");
                 IL2Class rect = core.GetClass("RectTransform", "UnityEngine");
                 _rectType = rect.IL2Typeof();
                 _anchorMin = rect.GetProperty("anchorMin");
                 _anchorMax = rect.GetProperty("anchorMax");
                 _offsetMin = rect.GetProperty("offsetMin");
                 _offsetMax = rect.GetProperty("offsetMax");
-                _behaviourEnabled = core.GetClass("Behaviour", "UnityEngine").GetProperty("enabled");
+                _pivot = rect.GetProperty("pivot");
+                _sizeDelta = rect.GetProperty("sizeDelta");
+                _anchoredPos3D = rect.GetProperty("anchoredPosition3D");
+
+                _canvasGroupType = Assembler.GetAssembly("UnityEngine.UIModule")
+                    .GetClass("CanvasGroup", "UnityEngine").IL2Typeof();
                 _ready = true;
             }
             catch (Exception ex) { Console.WriteLine("[RoguelikeCardImage] init EX: " + ex); }
         }
 
-        // Raw card Texture2D by cid (game ResourceManager), cached + gc-anchored.
-        public static IntPtr LoadTexture(int cid)
+        // New sprite for a card id, gc-anchored + parked under a DontDestroyOnLoad holder so
+        // Unity won't collect it (the underlying illust is the game's shared bundle asset).
+        static IntPtr LoadSprite(int cid)
         {
             IntPtr cached;
-            if (_texCache.TryGetValue(cid, out cached)) return cached;
+            if (_spriteCache.TryGetValue(cid, out cached)) return cached;
             IntPtr tex = AssetHelper.LoadImmediateAsset("Card/Images/Illust/tcg/" + cid);
-            if (tex != IntPtr.Zero) Import.Handler.il2cpp_gchandle_new(tex, true);
-            _texCache[cid] = tex;
-            return tex;
-        }
-
-        // Set a RawImage component's texture to card cid's art. `rawImageGo` is the GameObject
-        // holding the RawImage. Returns false if no art / no RawImage.
-        public static bool SetThumb(IntPtr rawImageGo, int cid)
-        {
-            if (!_ready || rawImageGo == IntPtr.Zero) return false;
-            IntPtr tex = LoadTexture(cid);
-            if (tex == IntPtr.Zero) { Console.WriteLine("[RoguelikeCardImage] no tex for cid " + cid); return false; }
-            IntPtr raw = GameObject.GetComponent(rawImageGo, _rawImageType);
-            if (raw == IntPtr.Zero) { Console.WriteLine("[RoguelikeCardImage] no RawImage on target"); return false; }
-            _rawImageTexture.GetSetMethod().Invoke(raw, new IntPtr[] { tex });
-            // The game's AutoReleaseCardIllust normally enables the RawImage; we disable that on
-            // the clone, so enable the RawImage ourselves or the texture won't render.
-            if (_behaviourEnabled != null) { csbool en = true; _behaviourEnabled.GetSetMethod().Invoke(raw, new IntPtr[] { new IntPtr(&en) }); }
-            return true;
-        }
-
-        public static IntPtr LoadSprite(int cid)
-        {
-            IntPtr cached;
-            if (_cache.TryGetValue(cid, out cached)) return cached;
-            IntPtr tex = AssetHelper.LoadImmediateAsset("Card/Images/Illust/tcg/" + cid);
+            if (tex != IntPtr.Zero)
+            {
+                int w = _texWidth.GetGetMethod().Invoke(tex).GetValueRef<int>();
+                int h = _texHeight.GetGetMethod().Invoke(tex).GetValueRef<int>();
+                _aspectCache[cid] = h != 0 ? (float)w / h : 1f;
+            }
             IntPtr sprite = tex == IntPtr.Zero ? IntPtr.Zero
                 : AssetHelper.SpriteFromTexture(tex, "rg_card_" + cid);
-            if (sprite != IntPtr.Zero) Import.Handler.il2cpp_gchandle_new(sprite, true);
-            _cache[cid] = sprite;
+            if (sprite != IntPtr.Zero)
+            {
+                Import.Handler.il2cpp_gchandle_new(sprite, true);
+                UnityObject.DontDestroyOnLoad(sprite);
+                if (_dontDestroyRoot == IntPtr.Zero)
+                {
+                    _dontDestroyRoot = GameObject.New();
+                    UnityObject.SetName(_dontDestroyRoot, "RgCardImagesDontDestroy");
+                    UnityObject.DontDestroyOnLoad(_dontDestroyRoot);
+                }
+                IntPtr keep = GameObject.New();
+                UnityObject.SetName(keep, "rg_card_" + cid);
+                IntPtr keepImg = GameObject.AddComponent(keep, _imageType);
+                _imageSetSprite.Invoke(keepImg, new IntPtr[] { sprite });
+                Transform.SetParent(GameObject.GetTransform(keep), GameObject.GetTransform(_dontDestroyRoot));
+            }
+            _spriteCache[cid] = sprite;
             return sprite;
         }
 
-        // Create an Image child named `name` filling `parent`, showing card `cid` (aspect
-        // preserved). Returns the image GameObject, or Zero on failure. Idempotent by name.
-        public static IntPtr AttachFill(IntPtr parent, int cid, string name)
+        // Overlay the card illust filling `parent`, aspect preserved. Idempotent by `name`.
+        public static IntPtr AttachCardImage(IntPtr parent, int cid, string name)
         {
             if (!_ready || parent == IntPtr.Zero) return IntPtr.Zero;
+            if (GameObject.FindGameObjectByName(parent, name, false, false) != IntPtr.Zero) return IntPtr.Zero;
             IntPtr sprite = LoadSprite(cid);
             if (sprite == IntPtr.Zero) { Console.WriteLine("[RoguelikeCardImage] no art for cid " + cid); return IntPtr.Zero; }
 
-            IntPtr existing = GameObject.FindGameObjectByName(parent, name, false, false);
-            if (existing != IntPtr.Zero) GameObject.SetActive(existing, false);
+            Vector3 zero = new Vector3(0, 0, 0);
+            Vector3 one = new Vector3(1, 1, 1);
 
-            IntPtr go = GameObject.New();
-            UnityObject.SetName(go, name);
-            GameObject.AddComponent(go, _rectType);
-            IntPtr img = GameObject.AddComponent(go, _imageType);
-            IntPtr t = GameObject.GetTransform(go);
-            Transform.SetParent(t, GameObject.GetTransform(parent));
-            SetFull(t);
-            Transform.SetAsLastSibling(t);
-            Transform.SetLocalScale(t, new Vector3(1, 1, 1));
+            // Container with a RectMask2D so the image is clipped to the slot.
+            IntPtr container = GameObject.New();
+            UnityObject.SetName(container, name);
+            GameObject.AddComponent(container, _canvasGroupType);
+            GameObject.AddComponent(container, _rectType);
+            GameObject.AddComponent(container, _rectMaskType);
+            IntPtr ct = GameObject.GetTransform(container);
+            Transform.SetParent(ct, GameObject.GetTransform(parent));
+            Transform.SetAsLastSibling(ct);
+            SetFull(ct);
+            _anchoredPos3D.GetSetMethod().Invoke(ct, new IntPtr[] { new IntPtr(&zero) });
+            Transform.SetLocalScale(ct, one);
+
+            // Image child that ENVELOPES the container (fills 100%, overflow clipped by the
+            // container's RectMask2D) via an AspectRatioFitter — same as the native slot.
+            IntPtr imgGo = GameObject.New();
+            UnityObject.SetName(imgGo, "Img");
+            GameObject.AddComponent(imgGo, _rectType);
+            IntPtr img = GameObject.AddComponent(imgGo, _imageType);
+            IntPtr fitter = GameObject.AddComponent(imgGo, _aspectFitterType);
+            IntPtr it = GameObject.GetTransform(imgGo);
+            Transform.SetParent(it, ct);
             _imageSetSprite.Invoke(img, new IntPtr[] { sprite });
-            csbool preserve = true;
+            csbool preserve = false;
             _imagePreserveAspect.GetSetMethod().Invoke(img, new IntPtr[] { new IntPtr(&preserve) });
-            return go;
+            SetCenter(it);
+            _anchoredPos3D.GetSetMethod().Invoke(it, new IntPtr[] { new IntPtr(&zero) });
+            Transform.SetLocalScale(it, one);
+            float aspect;
+            if (!_aspectCache.TryGetValue(cid, out aspect) || aspect <= 0f) aspect = 1f;
+            int envelopeParent = 4; // AspectRatioFitter.AspectMode.EnvelopeParent
+            _aspectFitterMode.GetSetMethod().Invoke(fitter, new IntPtr[] { new IntPtr(&envelopeParent) });
+            _aspectFitterRatio.GetSetMethod().Invoke(fitter, new IntPtr[] { new IntPtr(&aspect) });
+            return container;
         }
 
         static void SetFull(IntPtr t)
@@ -122,6 +157,14 @@ namespace YgoMasterClient
             _anchorMax.GetSetMethod().Invoke(t, new IntPtr[] { new IntPtr(&max) });
             _offsetMin.GetSetMethod().Invoke(t, new IntPtr[] { new IntPtr(&zero) });
             _offsetMax.GetSetMethod().Invoke(t, new IntPtr[] { new IntPtr(&zero) });
+        }
+
+        static void SetCenter(IntPtr t)
+        {
+            AssetHelper.Vector2 c = new AssetHelper.Vector2(0.5f, 0.5f);
+            _anchorMin.GetSetMethod().Invoke(t, new IntPtr[] { new IntPtr(&c) });
+            _anchorMax.GetSetMethod().Invoke(t, new IntPtr[] { new IntPtr(&c) });
+            _pivot.GetSetMethod().Invoke(t, new IntPtr[] { new IntPtr(&c) });
         }
     }
 }
