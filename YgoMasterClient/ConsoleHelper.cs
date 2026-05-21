@@ -851,6 +851,9 @@ namespace YgoMasterClient
                         Console.WriteLine("[rgpush] pushed " + splitted[1]);
                     }
                     break;
+                case "rgdeck":// dev: open the roguelike deck-select screen
+                    RoguelikeDeckSelectScreen.Open();
+                    break;
                 case "rgproof":// dev spike: inject bg + card image into current top VC. Usage: rgproof [cid]
                     {
                         int cid = 4007;

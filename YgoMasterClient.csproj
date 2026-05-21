@@ -76,6 +76,7 @@
     <Compile Include="YgoMasterClient\Roguelike\RoguelikeCardImage.cs" />
     <Compile Include="YgoMasterClient\Roguelike\RoguelikeDebug.cs" />
     <Compile Include="YgoMasterClient\Roguelike\RoguelikeFlow.cs" />
+    <Compile Include="YgoMasterClient\Roguelike\RoguelikeDeckSelectScreen.cs" />
     <Compile Include="YgoMasterClient\Roguelike\RoguelikeUiProof.cs" />
     <Compile Include="YgoMasterClient\Roguelike\RoguelikeHomeButton.cs" />
     <Compile Include="YgoMasterClient\SoundInterceptor.cs" />
