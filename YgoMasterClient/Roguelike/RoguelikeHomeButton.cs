@@ -14,15 +14,18 @@ namespace YgoMasterClient
         const string TemplateButton = "ButtonShop";   // bottom menu button; clone sits below it
         const string AboveButton = "ButtonQuest";      // the button just above ButtonShop (for row spacing)
         const string Label = "ROGUELIKE";
+        const string Description = "Enfrente a dungeon e derrote o boss final.";
 
         static IntPtr _selectionButtonType;
         static IL2Field _selectionButton_onClick;
         static IL2Method _unityEvent_AddListener;
         static IntPtr _tmpType;
+        static IntPtr _bindingTextType;
         static IntPtr _rectTransformType;
         static IL2Property _rectAnchoredPos;
         static readonly Action _onClick = OnClick;
         static bool _ready;
+        static bool _menuRunActive;
 
         static RoguelikeHomeButton()
         {
@@ -35,6 +38,7 @@ namespace YgoMasterClient
                 _selectionButton_onClick = selectionButton.GetField("onClick");
                 _unityEvent_AddListener = core.GetClass("UnityEvent", "UnityEngine.Events").GetMethod("AddListener");
                 _tmpType = CastUtils.IL2Typeof("ExtendedTextMeshProUGUI", "YgomSystem.YGomTMPro", "Assembly-CSharp");
+                _bindingTextType = CastUtils.IL2Typeof("BindingTextMeshProUGUI", "YgomSystem.UI", "Assembly-CSharp");
                 IL2Class rect = core.GetClass("RectTransform", "UnityEngine");
                 _rectTransformType = rect.IL2Typeof();
                 _rectAnchoredPos = rect.GetProperty("anchoredPosition");
@@ -65,6 +69,7 @@ namespace YgoMasterClient
                 SetText(clone, "Out.Text", Label);
                 SetText(clone, "Out.TextShadow", Label);
                 SetText(clone, "Over.Mask.TextOver", Label);
+                SetBoundText(clone, "GroupExplain.TextExplain", Description);
 
                 PlaceBelow(clone, template, GameObject.FindGameObjectByName(rootMenu, AboveButton));
 
@@ -114,10 +119,39 @@ namespace YgoMasterClient
             if (comp != IntPtr.Zero) TMPro.TMP_Text.SetText(comp, text);
         }
 
+        // For data-bound texts (BindingTextMeshProUGUI) a literal string renders verbatim.
+        static void SetBoundText(IntPtr root, string path, string text)
+        {
+            IntPtr go = GameObject.FindGameObjectByPath(root, path);
+            if (go == IntPtr.Zero) return;
+            IntPtr comp = GameObject.GetComponent(go, _bindingTextType);
+            if (comp != IntPtr.Zero) YgomSystem.UI.BindingTextMeshProUGUI.SetTextId(comp, text);
+        }
+
         static void OnClick()
         {
-            Console.WriteLine("[Roguelike] button clicked");
-            YgomGame.Menu.CommonDialogViewController.OpenAlertDialog("Roguelike", "Em construcao — overlay vem a seguir.", () => { });
+            _menuRunActive = RoguelikeApi.IsRunActive();
+            string[] entries = _menuRunActive
+                ? new string[] { "Continuar Run", "Abandonar Run" }
+                : new string[] { "Nova Run" };
+            YgomGame.Menu.ActionSheetViewController.Open("Roguelike", entries, OnMenuSelect);
+        }
+
+        static void OnMenuSelect(IntPtr ctx, int index)
+        {
+            if (_menuRunActive)
+            {
+                if (index == 0)
+                    YgomGame.Menu.CommonDialogViewController.OpenAlertDialog("Roguelike", "Continuar: o mapa vem no proximo milestone.", () => { });
+                else if (index == 1)
+                    YgomGame.Menu.CommonDialogViewController.OpenYesNoConfirmationDialog("Abandonar Run",
+                        "Tem certeza? A run atual sera perdida.", () => { RoguelikeApi.AbandonRun(); }, () => { });
+            }
+            else if (index == 0)
+            {
+                RoguelikeApi.StartRun();
+                YgomGame.Menu.CommonDialogViewController.OpenAlertDialog("Roguelike", "Nova run criada!", () => { });
+            }
         }
     }
 }
