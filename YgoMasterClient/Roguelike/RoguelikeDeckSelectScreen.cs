@@ -1,6 +1,7 @@
 using IL2CPP;
 using System;
 using UnityEngine;
+using YgoMaster;
 
 namespace YgoMasterClient
 {
@@ -24,6 +25,8 @@ namespace YgoMasterClient
         static IL2Method _unityEvent_AddListener;
         static IL2Method _unityEvent_RemoveAllListeners;
         static IL2Property _behaviourEnabled;
+        static IntPtr _rectType;
+        static IL2Property _offsetMax;
         static System.Collections.Generic.List<RoguelikeApi.DeckOffer> _offers;
         static readonly Action[] _tileActions = { () => OnTile(0), () => OnTile(1), () => OnTile(2) };
         static bool _pending;
@@ -46,6 +49,9 @@ namespace YgoMasterClient
                 // RemoveAllListeners is declared on the base UnityEventBase, not UnityEvent.
                 _unityEvent_RemoveAllListeners = core.GetClass("UnityEventBase", "UnityEngine.Events").GetMethod("RemoveAllListeners");
                 _behaviourEnabled = core.GetClass("Behaviour", "UnityEngine").GetProperty("enabled");
+                IL2Class rectClass = core.GetClass("RectTransform", "UnityEngine");
+                _rectType = rectClass.IL2Typeof();
+                _offsetMax = rectClass.GetProperty("offsetMax");
                 _ready = true;
             }
             catch (Exception ex) { Console.WriteLine("[Roguelike] deckselect init EX: " + ex); }
@@ -90,6 +96,7 @@ namespace YgoMasterClient
             IntPtr group = GameObject.FindGameObjectByPath(root, RecommendGroup);
             if (group == IntPtr.Zero) { Console.WriteLine("[Roguelike] RecommendGroup not found"); return; }
             SetText(group, "RecommendText", "Decks");
+            HideByName(group, "Base"); // panel bg is sized for 2 tiles; hide for now (revisit panel later)
 
             IntPtr template = GameObject.FindGameObjectByName(group, "RecommendButton1", false, false);
             if (template == IntPtr.Zero) { Console.WriteLine("[Roguelike] RecommendButton1 template not found"); return; }
@@ -153,15 +160,53 @@ namespace YgoMasterClient
             catch (Exception ex) { Console.WriteLine("[Roguelike] SetupTile " + index + " EX: " + ex.Message); }
         }
 
+        static int _drawerIndex;
+
         static void OnTile(int index)
         {
-            Console.WriteLine("[Roguelike] tile " + index);
+            if (_offers == null || index < 0 || index >= _offers.Count) return;
+            _drawerIndex = index;
+            RoguelikeApi.DeckOffer offer = _offers[index];
+            string title = offer.Name + (string.IsNullOrEmpty(offer.Description) ? "" : "\n" + offer.Description);
+            string[] entries = { "Ver deck", "Selecionar" };
+            YgomGame.Menu.ActionSheetViewController.Open(title, entries, OnDrawerSelect);
+        }
+
+        static void OnDrawerSelect(IntPtr ctx, int choice)
+        {
+            if (_offers == null || _drawerIndex < 0 || _drawerIndex >= _offers.Count) return;
+            if (choice == 0) ShowDeck(_offers[_drawerIndex]);
+            else if (choice == 1) Select(_drawerIndex);
+        }
+
+        static void Select(int index)
+        {
+            RoguelikeApi.ChooseDeck(index);
+            IntPtr manager = YgomGame.Menu.ContentViewControllerManager.GetManager();
+            if (manager != IntPtr.Zero) YgomSystem.UI.ViewControllerManager.PopChildViewController(manager);
+        }
+
+        static void ShowDeck(RoguelikeApi.DeckOffer offer)
+        {
+            // TODO(Task 5 step 2): open the native deck viewer with offer.Main/Extra.
+            Console.WriteLine("[Roguelike] ver deck: " + offer.Name + " (" + offer.Main.Count + " main)");
         }
 
         static void HideByName(IntPtr parent, string name)
         {
             IntPtr o = GameObject.FindGameObjectByName(parent, name, false, false);
             if (o != IntPtr.Zero) GameObject.SetActive(o, false);
+        }
+
+        // Widen the RecommendGroup's "Base" panel background (sized for 2 tiles by default).
+        static void SetBaseWidth(IntPtr group, float offsetMaxX)
+        {
+            IntPtr baseGo = GameObject.FindGameObjectByName(group, "Base", false, false);
+            if (baseGo == IntPtr.Zero) return;
+            IntPtr rt = GameObject.GetComponent(baseGo, _rectType);
+            if (rt == IntPtr.Zero || _offsetMax == null) return;
+            AssetHelper.Vector2 v = new AssetHelper.Vector2(offsetMaxX, 0);
+            _offsetMax.GetSetMethod().Invoke(rt, new IntPtr[] { new IntPtr(&v) });
         }
 
         // Disable a Behaviour on `go` by its class name (no namespace needed) so the game's
