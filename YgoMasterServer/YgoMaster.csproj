@@ -122,6 +122,8 @@
     <Compile Include="Goat\DuelDllProps.cs" />
     <Compile Include="Goat\DuelSettings.Goat.cs" />
     <Compile Include="Goat\GameServer.Goat.cs" />
+    <Compile Include="Roguelike\RoguelikeRun.cs" />
+    <Compile Include="Roguelike\GameServer.Roguelike.cs" />
     <Compile Include="Goat\Layout\DungeonGenerator.cs" />
     <Compile Include="Goat\Layout\GenerationContext.cs" />
     <Compile Include="Goat\Layout\HourglassGenerator.cs" />

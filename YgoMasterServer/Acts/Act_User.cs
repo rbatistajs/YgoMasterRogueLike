@@ -220,6 +220,7 @@ namespace YgoMaster
                 { "lock", numLockedReplays },
                 { "max", maxReplays }
             };
+            WriteRoguelikeState(request);
             request.Remove(
                 "Master.CardRare",
                 "Master.CardCr",
