@@ -201,3 +201,74 @@ andamento; "Abandonar" limpa tudo.
 > **M2 concluído (2026-05-21).** Pool próprio em `DataLE/Roguelike/StartingDecks/` (sem
 > reuso de código do `Goat`); loader `RoguelikeDeckPool`. Verificado in-game: Nova Run →
 > escolher 1 de 3 → persiste o deck.
+
+---
+
+## M2.5 — Tela de seleção de deck (UI rica) (spec)
+
+Objetivo: trocar o ActionSheet do M2 por uma **tela própria** mostrando os 3 decks como
+cards com a **carta principal em destaque**; clicar num card abre um **drawer** pra
+**visualizar o deck** (reusando o viewer nativo) e **selecionar**, com **descrição**.
+
+### Spike (concluído 2026-05-21)
+Provado in-game que dá pra empurrar uma tela do jogo standalone e renderizar nosso
+conteúdo nela (fundo + arte de carta). Ferramentas de dev criadas (mantidas):
+`vcdump [depth]` (despeja hierarquia da top VC em `_tmp/vc_<classe>.txt`), `vclog`
+(loga prefab-paths), `rgpush <path>` (empurra tela). Spike `rgproof` é descartável
+(removido quando o M2.5 entrar).
+
+### Base: `Solo/SoloMode`
+Abre com **fundo animado** + header/back nativos e hospeda a `SoloPortalViewController`,
+cujo conteúdo já tem **tiles de card prontas** (estrutura confirmada via `vcdump 12`):
+```
+SoloPortalUI(Clone) → Root
+  TitleSafeArea/TitleGroup/NameText                 ← título  → "Escolha seu Deck"
+  ButtonArea/MainGroup/RecommendGroup [HLayout]     ← seção dos cards
+    RecommendText                                   ← label  → "Decks"
+    RecommendButton1 / RecommendButton2             ← TILES (clonar p/ ter 3)
+      Button [SelectionButton]                      ← clicável (onClick)
+        …/ImageGate/SoloCardThumbMask/SoloCardThumbImage [RawImage, AutoReleaseCardIllust]  ← arte
+        …/NameArea/…/TextGateName [ExtendedTextMeshProUGUI]                                  ← nome
+  ButtonArea/MainGroup/LastPlayGroup                ← esconder
+  ButtonArea/GateListGroup                          ← esconder (Histórias/Treinamento)
+```
+
+### Fluxo
+```
+Nova Run → start_run → push Solo/SoloMode → customiza SoloPortal:
+  - título "Escolha seu Deck"; esconde LastPlayGroup + GateListGroup
+  - 3 tiles (RecommendButton clonadas): arte da carta principal + nome do deck
+  - tap numa tile → drawer:  [Ver deck]  [Selecionar]  + descrição
+       Ver deck   → viewer nativo de deck via DeckView.SetCards (cartas + descrição)
+       Selecionar → Roguelike.choose_deck(index) → fecha a tela
+Continuar (deck não escolhido) → reabre essa tela.
+```
+
+### Mecanismo (tudo confirmado no spike)
+- Empurrar/customizar: `ViewControllerManager.PushChildViewController("Solo/SoloMode")` →
+  `GetViewController(manager, SoloPortalViewController)` + hook `OnCreatedView` → manipular
+  GameObjects (clonar tiles, set texto, esconder grupos, wire onClick).
+- Arte de carta: `AssetHelper.LoadImmediateAsset("Card/Images/Illust/tcg/<cid>")` +
+  `AssetHelper.SpriteFromTexture` → `Image.sprite` (core, não-Goat). Alternativa: o binding
+  nativo `BindingSoloCardThumb` da própria tile.
+- Grid "ver deck": `YgomGame.Deck.DeckView.SetCards(ptr, mainColl, extraColl)` (DeckEditorUtils, core).
+
+### Server / dados (adições ao M2)
+- Enriquecer cada item de `deckOffers` com `description` + listas `main/extra/side` (ids),
+  pra alimentar o viewer sem round-trip. Após `choose_deck`, `deck` também leva `description`.
+- Novo campo `description` (e opcional `archetype`) nos JSONs de `Roguelike/StartingDecks`;
+  `RoguelikeDeckPool.LoadOne` lê.
+
+### Organização (código novo, isolado em `Roguelike/`)
+- `RoguelikeCardImage` (client) — carrega/cacheia sprite de carta por cid (reusa AssetHelper).
+- `RoguelikeDeckSelectScreen` (client) — push SoloMode + customiza SoloPortal + 3 tiles + drawer.
+- `RoguelikeFlow` — passa a abrir essa tela (em vez do ActionSheet) na conclusão do `start_run`.
+- Server: `RoguelikeDeckPool` + offers ganham `description` + card ids.
+
+### Fora do M2.5
+Uso do deck em duelo real (M4), mapa (M3). Tile "Ver deck" só visualiza.
+
+### Pronto quando (M2.5)
+Nova Run abre a tela SoloMode com 3 cards (arte + nome); tap abre drawer; "Ver deck" mostra
+o deck no viewer nativo (com descrição); "Selecionar" grava o deck e fecha; "Continuar" sem
+deck reabre a tela.
