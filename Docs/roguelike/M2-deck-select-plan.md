@@ -8,13 +8,20 @@
 **picks 1**, which is persisted as the run's deck in `roguelike.json`.
 
 **Architecture:** Server owns the roll + choice (`YgoMasterServer/Roguelike/`). The deck
-pool reuses the existing `DataLE/decks/normal/{0..6}/*.json` (player format), loaded with
-`DeckPoolLoader.LoadOne`. The client reacts to the `start_run` response in the
-`RequestStructure.Complete` hook (`DuelStarter.cs`) and opens an **ActionSheet** with the
-3 deck names; tapping one issues `choose_deck`. No card art yet (deferred to M3 map UI).
+pool is **our own** `DataLE/Roguelike/StartingDecks/*.json` (player format), loaded by a
+**Roguelike-owned** loader `RoguelikeDeckPool` (inspired by Goat's `DeckPoolLoader` but
+NOT reusing it — house rule: no `Goat/` code). The client reacts to the `start_run`
+response in the `RequestStructure.Complete` hook (`DuelStarter.cs`) and opens an
+**ActionSheet** with the 3 deck names; tapping one issues `choose_deck`. No card art yet
+(deferred to M3 map UI).
 
-**Tech stack:** C# (.NET Framework), MiniJSON, `DeckPoolLoader`, IL2CPP reflection,
-`Request.Entry`, `ClientWork` (`GetByJsonPath`/`SerializePath`),
+**House rule (this milestone):** do not reuse any code under `Goat/` (server or client).
+Allowed: stock YgoMaster code (`MiniJSON`, `Utils`, `DeckInfo`, the `GameServer` base,
+the `DuelStarter` network-complete hook, game `YgomGame.*` classes) and our own
+`Roguelike/` code. May take inspiration from `Goat/` and reimplement in `Roguelike/`.
+
+**Tech stack:** C# (.NET Framework), MiniJSON, `RoguelikeDeckPool` (ours), IL2CPP
+reflection, `Request.Entry`, `ClientWork` (`GetByJsonPath`/`SerializePath`),
 `ActionSheetViewController`, `CommonDialogViewController`.
 
 **Verification reality:** IL2CPP mod injected into a running game — **no unit tests**.
@@ -23,9 +30,12 @@ pool reuses the existing `DataLE/decks/normal/{0..6}/*.json` (player format), lo
 - Server build: `MSBuild YgoMasterServer/YgoMaster.csproj -t:Build -p:Configuration=Release -p:Platform=x64 -v:minimal -nologo`. Add `-p:GoatInstallDir=""` to skip the install-copy if `YgoMaster.exe` is running/locked.
 
 **Reused facts (already verified this milestone):**
-- `dataDirectory` is a field on `GameServer` (GameServer.State.cs:28); Act handlers in the
-  `partial class GameServer` (`Roguelike/GameServer.Roguelike.cs`) can use it directly.
-- `DeckPoolLoader.LoadOne(string fullPath)` → `LoadedDeck { string Name; Dictionary<string,object> SoloDuelDeck /* {Main,Extra,Side} */; int BossCard; }` (Goat/DeckPoolLoader.cs).
+- `dataDirectory` is a field on `GameServer` (GameServer.State.cs:28); at runtime it is
+  `<install>/DataLE` (per `DataDir.txt`). Act handlers in the `partial class GameServer`
+  (`Roguelike/GameServer.Roguelike.cs`) can use it directly.
+- Deck pool lives at `<dataDirectory>/Roguelike/StartingDecks/*.json` (player format:
+  `{name, m:{ids,r}, e:{ids,r}, s:{ids,r}, ...}`). We add a Roguelike-owned loader
+  `RoguelikeDeckPool` (Task 2) — do NOT use Goat's `DeckPoolLoader`.
 - `GetPlayerDirectory(player)` returns the player dir (where `roguelike.json` lives).
 - Client completion hook: `DuelStarter.cs` `Complete(thisPtr)` switch (~line 419), with a
   `ProfileReplayViewController.OnNetworkComplete(thisPtr, cmd)` call right after (~line 442).
@@ -33,73 +43,115 @@ pool reuses the existing `DataLE/decks/normal/{0..6}/*.json` (player format), lo
   (same call used for `"Duel"` at DuelStarter.cs:425) → `MiniJSON.Json.Deserialize` to a list.
 - M1 menu lives in `RoguelikeHomeButton.OnMenuSelect`; `RoguelikeApi.Call(act, args)`
   already issues acts via `Request.Entry`.
+- Existing dispatch cases in `GameServer.cs` (~lines 484-489): `Roguelike.start_run`,
+  `Roguelike.abandon_run`.
 
 ---
 
-## Task 1 — Server: extend `RoguelikeRun` model (deckChosen / deckOffers / deck)
+## Task 1 — Server: extend `RoguelikeRun` model ✅ DONE
 
-**Files:** `YgoMasterServer/Roguelike/RoguelikeRun.cs`
-
-- [ ] Add the three fields and round-trip them through `ToDictionary` / `FromDictionary`.
-  `DeckOffers` is a `List<object>` of `Dictionary<string,object>`; `Deck` is a
-  `Dictionary<string,object>` (or null). Keep JSON-friendly shapes (MiniJSON handles
-  `List<object>` / `Dictionary<string,object>`).
-
-```csharp
-// add fields (after CreatedAt)
-public bool DeckChosen;
-public List<object> DeckOffers;            // each item: {name, bossCard, file}
-public Dictionary<string, object> Deck;    // {name, bossCard, deck:{Main,Extra,Side}} or null
-```
-
-```csharp
-// ToDictionary(): add these entries to the returned dict
-{ "deckChosen", DeckChosen },
-{ "deckOffers", DeckOffers ?? new List<object>() },
-{ "deck", Deck },
-```
-
-```csharp
-// FromDictionary(): add these to the constructed RoguelikeRun
-DeckChosen = Utils.GetValue<bool>(d, "deckChosen", false),
-DeckOffers = Utils.GetValue<List<object>>(d, "deckOffers"),
-Deck       = Utils.GetValue<Dictionary<string, object>>(d, "deck"),
-```
-
-- [ ] Build server: `MSBuild YgoMasterServer/YgoMaster.csproj -t:Build -p:Configuration=Release -p:Platform=x64 -v:minimal -nologo -p:GoatInstallDir=""`. Expected: build succeeds.
-- [ ] Commit: `feat(roguelike): extend run model with deck offers + chosen deck`
+Added `DeckChosen` (bool), `DeckOffers` (`List<object>` of `{name,bossCard,file}`), `Deck`
+(`Dictionary<string,object>` or null) to `RoguelikeRun.cs`, round-tripped through
+`ToDictionary`/`FromDictionary`. Built + committed (`5ad89ea`).
 
 ---
 
-## Task 2 — Server: roll 3 offers in `start_run` + new `choose_deck` act + dispatch
+## Task 2 — Server: `RoguelikeDeckPool` loader + `StartingDecks` data
 
-**Files:** `YgoMasterServer/Roguelike/GameServer.Roguelike.cs`, modify `YgoMasterServer/GameServer.cs` (dispatch).
+**Files:** Create `YgoMasterServer/Roguelike/RoguelikeDeckPool.cs`; modify
+`YgoMasterServer/YgoMaster.csproj` (Compile include); create deck data under
+`<install>/DataLE/Roguelike/StartingDecks/` (data, not in git).
 
-- [ ] Add a private deck-pool roll helper to the partial. It enumerates every `*.json`
-  under `decks/normal/{0..6}`, picks up to 3 distinct files with a seeded RNG, and loads
-  each (name + bossCard) via `DeckPoolLoader.LoadOne`. The `file` stored is **relative** to
-  `dataDirectory` (portable across machines).
+- [ ] Create the loader. Uses only stock code (`MiniJSON`, `Utils`). Display name = file
+  name (clean curation); boss card = `boss_card` field or first main id.
 
 ```csharp
-// in partial class GameServer (Roguelike/GameServer.Roguelike.cs)
+// YgoMasterServer/Roguelike/RoguelikeDeckPool.cs
+using System;
+using System.Collections.Generic;
+using System.IO;
+
+namespace YgoMaster
+{
+    // Roguelike-owned starter-deck loader. Reads player-format deck JSONs from
+    // DataLE/Roguelike/StartingDecks. Display name = file name; boss card = `boss_card`
+    // field or the first main-deck id. (Inspired by Goat's DeckPoolLoader; not reused.)
+    static class RoguelikeDeckPool
+    {
+        public class StarterDeck
+        {
+            public string Name;                       // file name (no extension)
+            public int BossCard;
+            public Dictionary<string, object> Json;   // raw player-format deck dict
+        }
+
+        // All .json files under <dataDirectory>/Roguelike/StartingDecks (full paths).
+        public static List<string> ListFiles(string dataDirectory)
+        {
+            string dir = Path.Combine(dataDirectory, "Roguelike", "StartingDecks");
+            if (!Directory.Exists(dir)) return new List<string>();
+            return new List<string>(Directory.GetFiles(dir, "*.json"));
+        }
+
+        public static StarterDeck LoadOne(string fullPath)
+        {
+            Dictionary<string, object> doc = MiniJSON.Json.DeserializeStripped(
+                File.ReadAllText(fullPath)) as Dictionary<string, object>;
+            if (doc == null) return null;
+            return new StarterDeck
+            {
+                Name = Path.GetFileNameWithoutExtension(fullPath),
+                BossCard = ResolveBossCard(doc),
+                Json = doc,
+            };
+        }
+
+        static int ResolveBossCard(Dictionary<string, object> doc)
+        {
+            int explicitId = Utils.GetValue<int>(doc, "boss_card");
+            if (explicitId > 0) return explicitId;
+            Dictionary<string, object> main = Utils.GetValue<Dictionary<string, object>>(doc, "m");
+            List<object> ids = main != null ? Utils.GetValue<List<object>>(main, "ids") : null;
+            if (ids == null || ids.Count == 0) return 0;
+            try { return Convert.ToInt32(ids[0]); } catch { return 0; }
+        }
+    }
+}
+```
+
+- [ ] Add to `YgoMasterServer/YgoMaster.csproj` near the other `Roguelike\*` includes:
+  `<Compile Include="Roguelike\RoguelikeDeckPool.cs" />`
+- [ ] Create the data folder `<install>/DataLE/Roguelike/StartingDecks/` and seed it with a
+  handful of valid player-format starter decks (so "choose 1 of 3" has variety). These are
+  install-side data (not tracked in git, like the other deck folders). The controller
+  seeds these directly; the user can curate/replace afterwards (drop a player-format JSON
+  in the folder, file name = display name).
+- [ ] Build server. Expected: build succeeds.
+- [ ] Commit (code only): `feat(roguelike): starter-deck pool loader (RoguelikeDeckPool)`
+
+---
+
+## Task 3 — Server: roll 3 offers in `start_run` + new `choose_deck` act + dispatch
+
+**Files:** `YgoMasterServer/Roguelike/GameServer.Roguelike.cs`, modify
+`YgoMasterServer/GameServer.cs` (dispatch).
+
+- [ ] Add a private roll helper to the partial. Lists starter files via
+  `RoguelikeDeckPool.ListFiles`, picks up to 3 distinct with a seeded RNG, loads each
+  (name + bossCard). The stored `file` is **relative** to `dataDirectory`.
+
+```csharp
 List<object> RollDeckOffers(int seed, int count)
 {
-    List<string> files = new List<string>();
-    for (int level = 0; level <= 6; level++)
-    {
-        string dir = System.IO.Path.Combine(dataDirectory, "decks", "normal", level.ToString());
-        if (!System.IO.Directory.Exists(dir)) continue;
-        files.AddRange(System.IO.Directory.GetFiles(dir, "*.json"));
-    }
+    List<string> files = RoguelikeDeckPool.ListFiles(dataDirectory);
     List<object> offers = new List<object>();
     if (files.Count == 0)
     {
-        Console.WriteLine("[Roguelike] no starter decks under decks/normal/*");
+        Console.WriteLine("[Roguelike] no starter decks in Roguelike/StartingDecks");
         return offers;
     }
     Random rng = new Random(seed);
-    // Fisher-Yates shuffle, then take the first `count`.
-    for (int i = files.Count - 1; i > 0; i--)
+    for (int i = files.Count - 1; i > 0; i--) // Fisher-Yates
     {
         int j = rng.Next(i + 1);
         string tmp = files[i]; files[i] = files[j]; files[j] = tmp;
@@ -109,7 +161,7 @@ List<object> RollDeckOffers(int seed, int count)
     {
         try
         {
-            DeckPoolLoader.LoadedDeck d = DeckPoolLoader.LoadOne(files[i]);
+            RoguelikeDeckPool.StarterDeck d = RoguelikeDeckPool.LoadOne(files[i]);
             if (d == null) continue;
             string rel = files[i].StartsWith(dataDirectory)
                 ? files[i].Substring(dataDirectory.Length).TrimStart('\\', '/')
@@ -152,7 +204,7 @@ void Act_RoguelikeStartRun(GameServerWebRequest request)
 ```
 
 - [ ] Add `Act_RoguelikeChooseDeck` (new). Validates index + pending state, loads the chosen
-  offer's deck file, stores it as the run's deck, marks chosen, clears offers:
+  offer's file, stores it as the run's deck (player format), marks chosen, clears offers:
 
 ```csharp
 void Act_RoguelikeChooseDeck(GameServerWebRequest request)
@@ -167,13 +219,13 @@ void Act_RoguelikeChooseDeck(GameServerWebRequest request)
             string rel = offer != null ? Utils.GetValue<string>(offer, "file") : null;
             if (!string.IsNullOrEmpty(rel))
             {
-                string full = System.IO.Path.Combine(dataDirectory, rel);
-                DeckPoolLoader.LoadedDeck d = DeckPoolLoader.LoadOne(full);
+                RoguelikeDeckPool.StarterDeck d =
+                    RoguelikeDeckPool.LoadOne(System.IO.Path.Combine(dataDirectory, rel));
                 if (d != null)
                 {
                     run.Deck = new Dictionary<string, object>
                     {
-                        { "name", d.Name }, { "bossCard", d.BossCard }, { "deck", d.SoloDuelDeck },
+                        { "name", d.Name }, { "bossCard", d.BossCard }, { "deck", d.Json },
                     };
                     run.DeckChosen = true;
                     run.DeckOffers = new List<object>();
@@ -187,14 +239,15 @@ void Act_RoguelikeChooseDeck(GameServerWebRequest request)
 }
 ```
 
-- [ ] In `GameServer.cs` dispatch switch, add next to the existing `Roguelike.*` cases:
+- [ ] In `GameServer.cs` dispatch switch, add right after the `Roguelike.abandon_run` case
+  (~line 489):
   `case "Roguelike.choose_deck": Act_RoguelikeChooseDeck(gameServerWebRequest); break;`
-- [ ] Build server (same command as Task 1). Expected: build succeeds.
+- [ ] Build server. Expected: build succeeds.
 - [ ] Commit: `feat(roguelike): roll 3 deck offers on start + choose_deck act`
 
 ---
 
-## Task 3 — Client: `RoguelikeApi` additions (deckChosen / offer names / choose_deck)
+## Task 4 — Client: `RoguelikeApi` additions (deckChosen / offer names / choose_deck)
 
 **Files:** `YgoMasterClient/Roguelike/RoguelikeApi.cs`
 
@@ -239,15 +292,15 @@ public static void ChooseDeck(int index)
 
 ---
 
-## Task 4 — Client: deck-select reaction (`RoguelikeFlow`) + completion hook + menu wiring
+## Task 5 — Client: deck-select reaction (`RoguelikeFlow`) + completion hook + menu wiring
 
 **Files:** Create `YgoMasterClient/Roguelike/RoguelikeFlow.cs`; modify
 `YgoMasterClient/DuelStarter.cs` (one call in `Complete`), `YgoMasterClient/Roguelike/RoguelikeHomeButton.cs`
 (menu wiring), `YgoMasterClient.csproj` (Compile include).
 
-- [ ] Create `RoguelikeFlow.cs`: opens the deck-select ActionSheet and reacts to act
-  completions. Mirrors how `RoguelikeHomeButton` already calls `ActionSheetViewController`
-  / `CommonDialogViewController` / `RoguelikeApi`.
+- [ ] Create `RoguelikeFlow.cs`: opens the deck-select ActionSheet (3 deck names) and
+  reacts to act completions. Mirrors how `RoguelikeHomeButton` already calls
+  `ActionSheetViewController` / `CommonDialogViewController` / `RoguelikeApi`.
 
 ```csharp
 using System;
@@ -334,18 +387,18 @@ static void OnMenuSelect(IntPtr ctx, int index)
 
 ---
 
-## Task 5 — End-to-end verification (Definition of Done)
+## Task 6 — End-to-end verification (Definition of Done)
 
 Run the server (`YgoMaster.exe`), then launch the game. Use a player with **no**
 `roguelike.json` (or abandon any existing run first).
 
 - [ ] Home → ROGUELIKE → "Nova Run" → an ActionSheet titled "Escolha seu deck" lists 3
-  deck names.
+  deck names (from `Roguelike/StartingDecks`).
 - [ ] `roguelike.json` now has `active:true`, `deckChosen:false`, `deckOffers` with 3 items.
 - [ ] Pick a deck → toast "Deck escolhido: <name>"; `roguelike.json` now has
   `deckChosen:true`, `deck` populated (name/bossCard/deck), `deckOffers` empty.
 - [ ] Reopen ROGUELIKE before choosing (start a fresh run, dismiss the sheet) → "Continuar
-  Run" reopens the same selection.
+  Run" reopens the selection.
 - [ ] After choosing, "Continuar Run" shows the "Run em andamento" toast.
 - [ ] "Abandonar Run" (confirm) → `roguelike.json` removed.
 - [ ] Commit any fixups: `chore(roguelike): M2 verification fixups`
@@ -353,12 +406,15 @@ Run the server (`YgoMaster.exe`), then launch the game. Use a player with **no**
 ---
 
 ## Self-review notes
-- **Spec coverage:** model (T1), roll + choose act + dispatch (T2), client api (T3),
-  deck-select sheet + completion reaction + menu wiring (T4), end-to-end DoD (T5).
+- **Spec coverage:** model (T1 ✅), loader + starter data (T2), roll + choose act +
+  dispatch (T3), client api (T4), deck-select sheet + completion reaction + menu wiring
+  (T5), end-to-end DoD (T6).
+- **House rule honored:** no `Goat/` code reused; `RoguelikeDeckPool` is ours (stock
+  `MiniJSON`/`Utils` only); pool is `DataLE/Roguelike/StartingDecks`.
 - **Type consistency:** `DeckOffers` is `List<object>` of `Dictionary<string,object>`
-  everywhere; `Deck` is `Dictionary<string,object>` with `{name, bossCard, deck}`; the
-  client reads `Roguelike.deckChosen` (bool), `Roguelike.deckOffers` (list, via
-  `SerializePath`), `Roguelike.deck.name` (string).
+  everywhere; `Deck` is `Dictionary<string,object>` with `{name, bossCard, deck}` (deck =
+  player-format `m/e/s`); client reads `Roguelike.deckChosen` (bool), `Roguelike.deckOffers`
+  (list, via `SerializePath`), `Roguelike.deck.name` (string).
 - **Honest gaps (resolve during execution, not faked):** (1) confirm `MiniJSON.Json`
   (managed) is the right namespace in `RoguelikeApi.cs` (DuelStarter.cs uses it at :425);
   (2) confirm `ActionSheetViewController.Open` signature matches the M1 usage in
