@@ -146,8 +146,7 @@ namespace YgoMasterClient
                     if (!RoguelikeApi.IsDeckChosen())
                         RoguelikeFlow.OpenDeckSelect();
                     else
-                        YgomGame.Menu.CommonDialogViewController.OpenAlertDialog("Roguelike",
-                            "Run em andamento - o mapa vem no proximo milestone.", () => { });
+                        RoguelikeMapScreen.Open();
                 }
                 else if (index == 1) // Abandonar Run
                 {
