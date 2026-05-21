@@ -43,10 +43,19 @@ callbacks, `ClientWork` (`GetByJsonPath`/`UpdateJson`/`DeleteByJsonPath`).
 
 ---
 
-## Task 1 — SPIKE: client triggers a custom act, server responds, round-trip proven
+## Task 1 — Client→server send (mechanism RESOLVED ✅)
 
-**The one genuine unknown.** Goal: prove the client can cause the server to run a
-`Roguelike.ping` handler and the client can read the reply.
+**Proven live via UnityExplorer:** `YgomSystem.Network.Request.Entry(string act,
+Dictionary<string,Il2CppSystem.Object> params, float timeout)` issues any act on demand —
+the server received `Roguelike.ping` ("Unhandled act Roguelike.ping"). In the mod, call it
+via IL2 reflection and build the IL2CPP params dict with
+`YgomMiniJSON.Json.Deserialize(MiniJSON.Json.Serialize(managedDict))`. Read the response in
+the `RequestStructure.Complete` hook (`DuelStarter.cs` switch) from `$.Roguelike` in
+ClientWork. Concrete `RoguelikeApi.Call` is built in Task 4; verify a mod-issued
+`Roguelike.ping` logs `Req Roguelike.ping` server-side. (Investigation steps below are
+superseded.)
+
+**The mechanism (no longer unknown):**
 
 **Investigation (do in order, stop when one works):**
 - [ ] Read `YgomSystem.Network.API` (IL2CPP) — look for a GENERIC request method
