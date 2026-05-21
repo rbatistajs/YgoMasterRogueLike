@@ -42,7 +42,7 @@ Numa run:
 | # | Subsistema | Depende de |
 |---|---|---|
 | **M1** ✅ | Fundação: modelo+persistência da run, Acts, botão Home, overlay de entrada (Nova/Continuar/Abandonar) | — |
-| M2 | Início de run: pool de decks iniciais + escolher 1 de 3 | M1 |
+| **M2** ✅ | Início de run: pool de decks iniciais + escolher 1 de 3 | M1 |
 | M3 | Mapa: grid próprio + UI do mapa + tipos de node + navegação | M1, M2 |
 | M4 | Duelo + reward básico: iniciar duelo do node, vitória/derrota, moeda, avançar | M3 |
 | M5 | Booster + pool de cartas: abrir pacote, escolher até 3 cartas, salvar na run | M4 |
@@ -140,11 +140,16 @@ Home → botão "ROGUELIKE" → menu:
                              "Abandonar Run" → confirma → abandon_run
 ```
 
-### Pool de decks
-- Fonte: `DataLE/decks/normal/{0..6}/*.json` (formato player; já existe, usado pelas
-  Solo gates). Para `base_deck` o pool de starters é o `normal` inteiro (todos os tiers).
-- Seleção: RNG semeado pelo `seed` da run → 3 arquivos distintos; carregados via
-  `DeckPoolLoader.LoadOne`. `file` salvo como caminho relativo ao `dataDirectory`.
+### Pool de decks (nosso, fora do Goat)
+- Fonte: **`DataLE/Roguelike/StartingDecks/*.json`** — decks iniciais nossos (formato
+  player), curados/editáveis. **Não** reaproveitamos `DataLE/decks/` nem o
+  `DeckPoolLoader` da pasta `Goat` (regra: nada de código do Goat). Em vez disso, um
+  loader próprio `RoguelikeDeckPool` (em `YgoMasterServer/Roguelike/`, inspirado no
+  DeckPoolLoader) lista e carrega os JSONs.
+- Nome de exibição = nome do arquivo (sem extensão), pra curadoria simples. `bossCard` =
+  campo `boss_card` do JSON, ou o 1º id do main como fallback.
+- Seleção: RNG semeado pelo `seed` da run → 3 arquivos distintos; `file` salvo como
+  caminho relativo ao `dataDirectory` (ex.: `Roguelike/StartingDecks/Chaos Turbo.json`).
 
 ### Modelo (`roguelike.json`, adições ao M1)
 ```json
@@ -152,23 +157,24 @@ Home → botão "ROGUELIKE" → menu:
   "version": 1, "active": true, "gameType": "base_deck", "seed": 123, "createdAt": "...",
   "deckChosen": false,
   "deckOffers": [
-    {"name":"Goat Control","bossCard":12345,"file":"decks/normal/2/Goat Control.json"},
-    {"name":"Chaos Turbo","bossCard":67890,"file":"decks/normal/1/Chaos Turbo.json"},
-    {"name":"Warrior","bossCard":11111,"file":"decks/normal/3/Warrior.json"}
+    {"name":"Chaos Turbo","bossCard":5835,"file":"Roguelike/StartingDecks/Chaos Turbo.json"},
+    {"name":"Cat Control","bossCard":4456,"file":"Roguelike/StartingDecks/Cat Control.json"},
+    {"name":"Final Countdown","bossCard":4321,"file":"Roguelike/StartingDecks/Final Countdown.json"}
   ],
   "deck": null
 }
 ```
 - `deckChosen=false`: `deckOffers` tem 3, `deck=null`.
-- Após `choose_deck`: `deck` = `{name, bossCard, deck:{Main,Extra,Side}}` (pronto pro
-  `DuelSettings` no M4); `deckOffers` esvaziado.
+- Após `choose_deck`: `deck` = `{name, bossCard, deck:<deck formato-player m/e/s>}`.
+  Guardamos no formato player (não convertemos pro shape SoloDuel agora — isso é trabalho
+  do M4, com conversor nosso/`DeckInfo` original); `deckOffers` esvaziado.
 
 ### Acts (server)
 - `start_run` (evolui): cria run `active`, `deckChosen=false`, sorteia `seed` + 3 offers,
   persiste, responde o estado (com offers).
-- `choose_deck { index }` (novo): valida `0..2` e run pendente; `LoadOne(offers[index].file)`
-  → grava `deck`, `deckChosen=true`, limpa offers; responde estado. Idempotente (se já
-  escolhido, no-op).
+- `choose_deck { index }` (novo): valida `0..2` e run pendente;
+  `RoguelikeDeckPool.LoadOne(offers[index].file)` → grava `deck`, `deckChosen=true`, limpa
+  offers; responde estado. Idempotente (se já escolhido, no-op).
 - `abandon_run`: inalterado.
 - get_state (home piggyback): inclui `deckChosen`, `deck` (name/bossCard), `deckOffers`.
 
@@ -191,3 +197,7 @@ arte de carta fica pra UI do mapa (M3).
 "Nova Run" mostra 3 decks; escolher 1 grava `deck` + `deckChosen=true` no `roguelike.json`;
 reabrir antes de escolher reabre a seleção; após escolher, "Continuar" indica run em
 andamento; "Abandonar" limpa tudo.
+
+> **M2 concluído (2026-05-21).** Pool próprio em `DataLE/Roguelike/StartingDecks/` (sem
+> reuso de código do `Goat`); loader `RoguelikeDeckPool`. Verificado in-game: Nova Run →
+> escolher 1 de 3 → persiste o deck.
