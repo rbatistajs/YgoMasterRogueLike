@@ -851,8 +851,51 @@ namespace YgoMasterClient
                         Console.WriteLine("[rgpush] pushed " + splitted[1]);
                     }
                     break;
-                case "rgdeck":// dev: open the roguelike deck-select screen
-                    RoguelikeDeckSelectScreen.Open();
+                case "rgabandon":// dev: abandon the current roguelike run (reset for testing)
+                    RoguelikeApi.AbandonRun();
+                    break;
+                case "vcstack":// dev: list the view controller stack (index -> class) to console
+                    {
+                        IntPtr manager = YgomGame.Menu.ContentViewControllerManager.GetManager();
+                        if (manager == IntPtr.Zero) { Console.WriteLine("[vcstack] no manager"); break; }
+                        IL2Class vcm = Assembler.GetAssembly("Assembly-CSharp").GetClass("ViewControllerManager", "YgomSystem.UI");
+                        int count = 0;
+                        try { count = vcm.GetMethod("GetStackCount").Invoke(manager).GetValueRef<int>(); }
+                        catch (Exception e) { Console.WriteLine("[vcstack] count EX " + e.Message); }
+                        Console.WriteLine("[vcstack] count=" + count);
+                        IL2Method getAt = null;
+                        try { getAt = vcm.GetMethod("GetStackViewController", x => x.GetParameters().Length == 1 && x.GetParameters()[0].Type.Name.IndexOf("Int32") >= 0); }
+                        catch { }
+                        for (int i = 0; i < count && getAt != null; i++)
+                        {
+                            try
+                            {
+                                IL2Object vc = getAt.Invoke(manager, new IntPtr[] { new IntPtr(&i) });
+                                string nm = (vc != null && vc.ptr != IntPtr.Zero)
+                                    ? Marshal.PtrToStringAnsi(Import.Class.il2cpp_class_get_name(Import.Object.il2cpp_object_get_class(vc.ptr)))
+                                    : "null";
+                                Console.WriteLine("  [" + i + "] " + nm);
+                            }
+                            catch (Exception e) { Console.WriteLine("  [" + i + "] EX " + e.Message); }
+                        }
+                    }
+                    break;
+                case "clsdump":// dev: dump an IL2 class's methods to _tmp. Usage: clsdump <Namespace>.<Class> [assembly]
+                    {
+                        if (splitted.Length < 2) { Console.WriteLine("[clsdump] usage: clsdump <Namespace>.<Class> [assembly]"); break; }
+                        string full = splitted[1];
+                        int dot = full.LastIndexOf('.');
+                        string ns = dot > 0 ? full.Substring(0, dot) : "";
+                        string cls = dot > 0 ? full.Substring(dot + 1) : full;
+                        string asm = splitted.Length > 2 ? splitted[2] : "Assembly-CSharp";
+                        IL2Class c = Assembler.GetAssembly(asm).GetClass(cls, ns);
+                        if (c == null) { Console.WriteLine("[clsdump] class not found: " + full); break; }
+                        StringBuilder sb = new StringBuilder();
+                        sb.Append(ns).Append('.').Append(cls).Append(" methods:\n");
+                        foreach (IL2Method m in c.GetMethods()) sb.Append("  ").Append(m.Name).Append('(').Append(m.GetParameters().Length).Append(")\n");
+                        RoguelikeDebug.Write("cls_" + cls + ".txt", sb.ToString());
+                        Console.WriteLine("[clsdump] " + cls + " -> _tmp/cls_" + cls + ".txt");
+                    }
                     break;
                 case "pvpops":// Generates enum for YgoMaster.PvpOperation
                     {

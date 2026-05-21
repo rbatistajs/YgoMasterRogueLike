@@ -79,6 +79,7 @@
     <Compile Include="YgoMasterClient\Roguelike\RoguelikeSoloScreen.cs" />
     <Compile Include="YgoMasterClient\Roguelike\RoguelikeDeckSelectScreen.cs" />
     <Compile Include="YgoMasterClient\Roguelike\RoguelikeMapScreen.cs" />
+    <Compile Include="YgoMasterClient\Roguelike\RoguelikeRunScreen.cs" />
     <Compile Include="YgoMasterClient\Roguelike\RoguelikeHomeButton.cs" />
     <Compile Include="YgoMasterClient\SoundInterceptor.cs" />
     <Compile Include="YgoMasterClient\TradeUtils.cs" />

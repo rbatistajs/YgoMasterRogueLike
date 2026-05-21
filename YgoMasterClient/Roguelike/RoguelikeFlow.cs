@@ -1,31 +1,15 @@
-using System;
-
 namespace YgoMasterClient
 {
-    // Run-flow reactions: opens the deck-select screen and handles the async responses of
-    // Roguelike acts (driven from DuelStarter's Complete hook).
+    // Run-flow reactions: drives the unified run screen from completed Roguelike acts
+    // (called from DuelStarter's Complete hook).
     static class RoguelikeFlow
     {
-        // Open the deck-select screen (3 deck tiles).
-        public static void OpenDeckSelect()
-        {
-            RoguelikeDeckSelectScreen.Open();
-        }
-
-        // Called from DuelStarter.Complete for every completed network command.
         public static void OnNetworkComplete(string cmd)
         {
             if (cmd == "Roguelike.start_run")
-            {
-                OpenDeckSelect();
-            }
-            else if (cmd == "Roguelike.choose_deck")
-            {
-                // Close the deck-select SoloMode (takes its SoloPortal with it) so back from
-                // the map returns Home, then open the map.
-                RoguelikeSoloScreen.Close();
-                RoguelikeMapScreen.Open();
-            }
+                RoguelikeRunScreen.Open();                 // new run -> open screen (deck choice)
+            else if (cmd == "Roguelike.choose_deck" || cmd == "Roguelike.move")
+                RoguelikeRunScreen.Refresh();              // in-place: choice -> map, or map nav
         }
     }
 }

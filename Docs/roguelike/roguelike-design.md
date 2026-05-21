@@ -351,3 +351,13 @@ Ações dos nós (M4: duelo/reward), gating do boss por 2/3 elites (M7), loja/ev
 Escolher o deck gera o mapa; "Continuar" abre a tela do mapa (StS) reaproveitando a base;
 dá pra navegar de baixo até o boss com `position`/`visited` persistidos; trocar o
 `Settings.json` (ex.: `floors`/`width`/`typeWeights`) muda o layout sem recompilar.
+
+> **Revisão de UI (2026-05-21):** base única `DeckEdit/DeckSelect` (`DeckSelectViewController2`)
+> em vez de `SoloMode`. UMA tela (`RoguelikeRunScreen`) que mostra **escolha de deck OU
+> mapa** conforme o estado, trocando o conteúdo **in-place** (sem flicker). Reaproveita o
+> tile `DeckGroup/.../Template(Clone)[DeckBox]` (caixa de deck com cartas + nome +
+> `Body[SelectionButton]`): nas escolhas mostra os 3 decks; no mapa vira nó (menor, ícone de
+> tipo) com **GridLayoutGroup desligado + posição manual** + linhas. Botão **ROGUELIKE** abre
+> direto (nova/continua conforme estado, sem o menu). Botão do topo (`HeaderButtonGroup`) →
+> editor do deck da run; footer → Abandonar. As telas em SoloMode (deck-select/map) são
+> substituídas.

@@ -25,7 +25,6 @@ namespace YgoMasterClient
         static IL2Property _rectAnchoredPos;
         static readonly Action _onClick = OnClick;
         static bool _ready;
-        static bool _menuRunActive;
 
         static RoguelikeHomeButton()
         {
@@ -128,36 +127,15 @@ namespace YgoMasterClient
             if (comp != IntPtr.Zero) YgomSystem.UI.BindingTextMeshProUGUI.SetTextId(comp, text);
         }
 
+        // Direct entry (no menu): no run -> start one (the run screen opens on start_run's
+        // completion); active run -> open the run screen (it shows choice or map by state).
+        // Abandon will live inside the run screen later.
         static void OnClick()
         {
-            _menuRunActive = RoguelikeApi.IsRunActive();
-            string[] entries = _menuRunActive
-                ? new string[] { "Continuar Run", "Abandonar Run" }
-                : new string[] { "Nova Run" };
-            YgomGame.Menu.ActionSheetViewController.Open("Roguelike", entries, OnMenuSelect);
-        }
-
-        static void OnMenuSelect(IntPtr ctx, int index)
-        {
-            if (_menuRunActive)
-            {
-                if (index == 0) // Continuar Run
-                {
-                    if (!RoguelikeApi.IsDeckChosen())
-                        RoguelikeFlow.OpenDeckSelect();
-                    else
-                        RoguelikeMapScreen.Open();
-                }
-                else if (index == 1) // Abandonar Run
-                {
-                    YgomGame.Menu.CommonDialogViewController.OpenYesNoConfirmationDialog("Abandonar Run",
-                        "Tem certeza? A run atual sera perdida.", () => { RoguelikeApi.AbandonRun(); }, () => { });
-                }
-            }
-            else if (index == 0) // Nova Run
-            {
-                RoguelikeApi.StartRun(); // deck-select sheet opens on start_run completion
-            }
+            if (!RoguelikeApi.IsRunActive())
+                RoguelikeApi.StartRun();
+            else
+                RoguelikeRunScreen.Open();
         }
     }
 }
