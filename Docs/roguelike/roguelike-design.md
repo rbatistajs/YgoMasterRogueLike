@@ -272,3 +272,16 @@ Uso do deck em duelo real (M4), mapa (M3). Tile "Ver deck" só visualiza.
 Nova Run abre a tela SoloMode com 3 cards (arte + nome); tap abre drawer; "Ver deck" mostra
 o deck no viewer nativo (com descrição); "Selecionar" grava o deck e fecha; "Continuar" sem
 deck reabre a tela.
+
+> **M2.5 concluído (2026-05-21).** Verificado in-game: Home → Nova Run abre a tela
+> (`Solo/SoloMode` reaproveitado; hook em `SoloPortalViewController.OnCreatedView` gated por
+> flag — Solo normal intacto); 3 tiles clonadas de `RecommendButton` com arte da carta
+> principal (overlay `RoguelikeCardImage`: sprite próprio gchandle'd + DontDestroyOnLoad +
+> AspectRatioFitter EnvelopeParent — preenche e sobrevive ao viewer); drawer (ActionSheet)
+> com "Ver deck" (abre o `DeckBrowser` nativo via args IL2CPP **tipados**, evitando o cast
+> Int64→Int32) e "Selecionar" (`choose_deck` + fecha). Dev tools mantidas:
+> `vcdump`/`vclog`/`rgpush`/`rgdeck`.
+>
+> Pendências (não bloqueiam): `boss_card` por deck nas StartingDecks (Buster Blader/Cat
+> Control caem no mesmo cid 5655 = 1º id do main); painel lateral de descrição do viewer
+> (`shortcutSettings`); fundo `Base` do RecommendGroup escondido (revisitar o painel).
