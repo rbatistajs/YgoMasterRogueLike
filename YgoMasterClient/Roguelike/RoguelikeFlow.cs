@@ -3,26 +3,14 @@ using System.Collections.Generic;
 
 namespace YgoMasterClient
 {
-    // Run-flow reactions: opens the deck-select ActionSheet (offer names) and handles the
-    // async responses of Roguelike acts (driven from DuelStarter's Complete hook).
+    // Run-flow reactions: opens the deck-select screen and handles the async responses of
+    // Roguelike acts (driven from DuelStarter's Complete hook).
     static class RoguelikeFlow
     {
-        // Open the "choose 1 of N" sheet from the current $.Roguelike offers.
+        // Open the deck-select screen (3 deck tiles).
         public static void OpenDeckSelect()
         {
-            string[] names = RoguelikeApi.GetDeckOfferNames();
-            if (names.Length == 0)
-            {
-                YgomGame.Menu.CommonDialogViewController.OpenAlertDialog("Roguelike",
-                    "Nenhum deck disponivel no pool.", () => { });
-                return;
-            }
-            YgomGame.Menu.ActionSheetViewController.Open("Escolha seu deck", names, OnDeckPicked);
-        }
-
-        static void OnDeckPicked(IntPtr ctx, int index)
-        {
-            RoguelikeApi.ChooseDeck(index);
+            RoguelikeDeckSelectScreen.Open();
         }
 
         // Called from DuelStarter.Complete for every completed network command.

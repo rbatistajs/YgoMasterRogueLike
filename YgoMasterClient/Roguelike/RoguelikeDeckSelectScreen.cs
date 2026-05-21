@@ -27,7 +27,13 @@ namespace YgoMasterClient
         static IL2Property _behaviourEnabled;
         static IntPtr _rectType;
         static IL2Property _offsetMax;
+        static IL2Class _objectClass;
+        static IL2Class _boolClass;
+        static IL2Class _dictClass;
+        static IL2Method _dictCtor;
         static System.Collections.Generic.List<RoguelikeApi.DeckOffer> _offers;
+        static IntPtr _recommendGroup;
+        static bool _viewing;
         static readonly Action[] _tileActions = { () => OnTile(0), () => OnTile(1), () => OnTile(2) };
         static bool _pending;
         static bool _ready;
@@ -52,6 +58,11 @@ namespace YgoMasterClient
                 IL2Class rectClass = core.GetClass("RectTransform", "UnityEngine");
                 _rectType = rectClass.IL2Typeof();
                 _offsetMax = rectClass.GetProperty("offsetMax");
+                IL2Assembly mscorlib = Assembler.GetAssembly("mscorlib");
+                _objectClass = mscorlib.GetClass("Object", "System");
+                _boolClass = mscorlib.GetClass("Boolean", "System");
+                _dictClass = IL2Dictionary<string, object>.Instance_Class;
+                _dictCtor = _dictClass.GetMethod(".ctor", x => x.GetParameters().Length == 0);
                 _ready = true;
             }
             catch (Exception ex) { Console.WriteLine("[Roguelike] deckselect init EX: " + ex); }
@@ -95,6 +106,7 @@ namespace YgoMasterClient
             _offers = RoguelikeApi.GetDeckOffers();
             IntPtr group = GameObject.FindGameObjectByPath(root, RecommendGroup);
             if (group == IntPtr.Zero) { Console.WriteLine("[Roguelike] RecommendGroup not found"); return; }
+            _recommendGroup = group;
             SetText(group, "RecommendText", "Decks");
             HideByName(group, "Base"); // panel bg is sized for 2 tiles; hide for now (revisit panel later)
 
@@ -131,16 +143,7 @@ namespace YgoMasterClient
                     IntPtr c = GameObject.GetComponent(nameTmp, _tmpType);
                     if (c != IntPtr.Zero) TMPro.TMP_Text.SetText(c, offer.Name);
                 }
-                // Render the boss-card art in the tile's native card slot (RawImage). Disable
-                // the game's auto-binder/releaser on the clone so they don't override us.
-                IntPtr imageGate = GameObject.FindGameObjectByPath(tile, "Button.Main.Mask.ImageGate");
-                IntPtr thumb = GameObject.FindGameObjectByPath(tile, "Button.Main.Mask.ImageGate.SoloCardThumbMask.SoloCardThumbImage");
-                if (thumb != IntPtr.Zero && offer.BossCard > 0)
-                {
-                    DisableComponent(imageGate, "BindingSoloCardThumb");
-                    DisableComponent(thumb, "AutoReleaseCardIllust");
-                    RoguelikeCardImage.SetThumb(thumb, offer.BossCard);
-                }
+                ApplyTileArt(tile, offer);
 
                 IntPtr buttonGo = GameObject.FindGameObjectByPath(tile, "Button");
                 IntPtr sel = buttonGo == IntPtr.Zero ? IntPtr.Zero : GameObject.GetComponent(buttonGo, _selectionButtonType);
@@ -161,6 +164,35 @@ namespace YgoMasterClient
         }
 
         static int _drawerIndex;
+
+        // Render the boss-card art in the tile's native card slot (RawImage). Disable the
+        // game's auto-binder/releaser on the clone so they don't override us.
+        static void ApplyTileArt(IntPtr tile, RoguelikeApi.DeckOffer offer)
+        {
+            if (offer.BossCard <= 0) return;
+            IntPtr imageGate = GameObject.FindGameObjectByPath(tile, "Button.Main.Mask.ImageGate");
+            if (imageGate == IntPtr.Zero) return;
+            DisableComponent(imageGate, "BindingSoloCardThumb"); // stop the game's thumb binder on the clone
+            RoguelikeCardImage.AttachCardImage(imageGate, offer.BossCard, "RgCardArt");
+        }
+
+        // The native deck viewer (DeckBrowser) releases shared card textures when it closes,
+        // blanking our tiles. Re-apply the art when we return from it.
+        public static void OnPopChildViewController()
+        {
+            if (!_viewing) return;
+            _viewing = false;
+            if (_recommendGroup == IntPtr.Zero || _offers == null) return;
+            try
+            {
+                for (int i = 0; i < _offers.Count && i < 3; i++)
+                {
+                    IntPtr tile = GameObject.FindGameObjectByName(_recommendGroup, "RgTile" + i, false, false);
+                    if (tile != IntPtr.Zero) ApplyTileArt(tile, _offers[i]);
+                }
+            }
+            catch (Exception ex) { Console.WriteLine("[Roguelike] reapply art EX: " + ex); }
+        }
 
         static void OnTile(int index)
         {
@@ -186,10 +218,57 @@ namespace YgoMasterClient
             if (manager != IntPtr.Zero) YgomSystem.UI.ViewControllerManager.PopChildViewController(manager);
         }
 
+        // Open the game's native read-only deck viewer (DeckBrowser / "Deck do Oponente")
+        // with the offer's cards. Args are built as typed IL2CPP objects (Int32, not the
+        // JSON round-trip's Int64) because DeckBrowserViewController hard-casts to Int32.
         static void ShowDeck(RoguelikeApi.DeckOffer offer)
         {
-            // TODO(Task 5 step 2): open the native deck viewer with offer.Main/Extra.
-            Console.WriteLine("[Roguelike] ver deck: " + offer.Name + " (" + offer.Main.Count + " main)");
+            if (!_ready) return;
+            IntPtr manager = YgomGame.Menu.ContentViewControllerManager.GetManager();
+            if (manager == IntPtr.Zero) return;
+            try
+            {
+                IntPtr args = NewDict();
+                DictAdd(args, "name", new IL2String(offer.Name).ptr);
+                DictAdd(args, "deckNameInit", BoxBool(true));
+                DictAdd(args, "iconDeckId", BoxInt(1081001));
+                DictAdd(args, "mcards", CardDict(offer.Main));
+                DictAdd(args, "ecards", CardDict(offer.Extra));
+                DictAdd(args, "numMainCards", BoxInt(offer.Main.Count));
+                DictAdd(args, "numExtraCards", BoxInt(offer.Extra.Count));
+                DictAdd(args, "regulationMonochromeEnable", BoxBool(false));
+                _viewing = true;
+                YgomSystem.UI.ViewControllerManager.PushChildViewControllerArgs(manager, "DeckBrowser", args);
+            }
+            catch (Exception ex) { Console.WriteLine("[Roguelike] ShowDeck EX: " + ex); }
+        }
+
+        // --- typed IL2CPP arg builders ---
+        static IntPtr NewDict()
+        {
+            IntPtr p = Import.Object.il2cpp_object_new(_dictClass.ptr);
+            _dictCtor.Invoke(p);
+            return p;
+        }
+
+        static void DictAdd(IntPtr dict, string key, IntPtr valueObj)
+        {
+            new IL2Dictionary<string, object>(dict).Add(new IL2String(key).ptr, valueObj);
+        }
+
+        static IntPtr BoxInt(int v) { return Import.Object.CreateNewObject<int>(v, IL2SystemClass.Int32); }
+        static IntPtr BoxBool(bool v) { return Import.Object.CreateNewObject<bool>(v, _boolClass); }
+
+        // Player-format deck section { ids:[...], r:[...] } as List<object> of boxed Int32.
+        static IntPtr CardDict(System.Collections.Generic.List<int> ids)
+        {
+            IL2ListExplicit idsList = new IL2ListExplicit(IntPtr.Zero, _objectClass, true);
+            IL2ListExplicit rList = new IL2ListExplicit(IntPtr.Zero, _objectClass, true);
+            foreach (int id in ids) { idsList.Add(BoxInt(id)); rList.Add(BoxInt(1)); }
+            IntPtr d = NewDict();
+            DictAdd(d, "ids", idsList.ptr);
+            DictAdd(d, "r", rList.ptr);
+            return d;
         }
 
         static void HideByName(IntPtr parent, string name)

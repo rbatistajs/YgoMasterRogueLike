@@ -2200,6 +2200,13 @@ namespace YgomSystem.UI
             });
         }
 
+        // Push with a pre-built IL2CPP args object (bypasses the JSON round-trip so int
+        // values stay Int32 — some view controllers hard-cast args to Int32).
+        public static void PushChildViewControllerArgs(IntPtr thisPtr, string prefabpath, IntPtr argsPtr)
+        {
+            methodPushChildViewControllerWithArgs.Invoke(thisPtr, new IntPtr[] { new IL2String(prefabpath).ptr, argsPtr });
+        }
+
         public static void PushChildViewController(IntPtr thisPtr, IntPtr prefab)
         {
             methodPushChildViewControllerObj.Invoke(thisPtr, new IntPtr[] { prefab });
@@ -2215,6 +2222,7 @@ namespace YgomSystem.UI
             hookPopChildViewController2.Original(thisPtr, popTarget);
             YgomGame.Room.RoomCreateViewController.OnPopChildViewController(thisPtr);
             YgomGame.Menu.ProfileReplayViewController.OnPopChildViewController(thisPtr, popTarget);
+            YgoMasterClient.RoguelikeDeckSelectScreen.OnPopChildViewController();
         }
 
         public static IntPtr LoadViewControllerPrefab(IntPtr thisPtr, string prefabpath)
