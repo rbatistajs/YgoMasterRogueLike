@@ -122,5 +122,54 @@ namespace YgoMasterClient
             if (arr == null) return;
             foreach (object v in arr) { try { into.Add(Convert.ToInt32(v)); } catch { } }
         }
+
+        // ----- map (M3) -----
+        public class MapNode
+        {
+            public int Id, Row, Col;
+            public string Type = "duel";
+            public List<int> Next = new List<int>();
+        }
+
+        // Current node id (-1 = entry, before row 0).
+        public static int Position()
+        {
+            return YgomSystem.Utility.ClientWork.GetByJsonPath<int>("Roguelike.position");
+        }
+
+        public static List<MapNode> GetMapNodes()
+        {
+            List<MapNode> result = new List<MapNode>();
+            try
+            {
+                string json = YgomSystem.Utility.ClientWork.SerializePath("Roguelike.map");
+                if (string.IsNullOrEmpty(json)) return result;
+                Dictionary<string, object> map = MiniJSON.Json.Deserialize(json) as Dictionary<string, object>;
+                List<object> nodes = map != null && map.ContainsKey("nodes") ? map["nodes"] as List<object> : null;
+                if (nodes == null) return result;
+                foreach (object o in nodes)
+                {
+                    Dictionary<string, object> d = o as Dictionary<string, object>;
+                    if (d == null) continue;
+                    MapNode n = new MapNode
+                    {
+                        Id = d.ContainsKey("id") ? Convert.ToInt32(d["id"]) : -1,
+                        Type = d.ContainsKey("type") ? Convert.ToString(d["type"]) : "duel",
+                        Row = d.ContainsKey("row") ? Convert.ToInt32(d["row"]) : 0,
+                        Col = d.ContainsKey("col") ? Convert.ToInt32(d["col"]) : 0,
+                    };
+                    List<object> next = d.ContainsKey("next") ? d["next"] as List<object> : null;
+                    if (next != null) foreach (object v in next) { try { n.Next.Add(Convert.ToInt32(v)); } catch { } }
+                    result.Add(n);
+                }
+            }
+            catch (Exception ex) { Console.WriteLine("[Roguelike] GetMapNodes EX: " + ex); }
+            return result;
+        }
+
+        public static void Move(int nodeId)
+        {
+            Call("Roguelike.move", new Dictionary<string, object> { { "nodeId", nodeId } });
+        }
     }
 }
