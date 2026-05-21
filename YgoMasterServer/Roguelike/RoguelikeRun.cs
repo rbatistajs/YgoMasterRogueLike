@@ -11,6 +11,9 @@ namespace YgoMaster
         public string GameType = "base_deck";
         public long Seed;
         public string CreatedAt;
+        public bool DeckChosen;
+        public List<object> DeckOffers;            // each item: {name, bossCard, file}
+        public Dictionary<string, object> Deck;    // {name, bossCard, deck:{Main,Extra,Side}} or null
 
         public Dictionary<string, object> ToDictionary()
         {
@@ -18,6 +21,9 @@ namespace YgoMaster
             {
                 { "version", Version }, { "active", Active }, { "gameType", GameType },
                 { "seed", Seed }, { "createdAt", CreatedAt },
+                { "deckChosen", DeckChosen },
+                { "deckOffers", DeckOffers ?? new List<object>() },
+                { "deck", Deck },
             };
         }
 
@@ -31,6 +37,9 @@ namespace YgoMaster
                 GameType  = Utils.GetValue<string>(d, "gameType", "base_deck"),
                 Seed      = Utils.GetValue<long>(d, "seed", 0),
                 CreatedAt = Utils.GetValue<string>(d, "createdAt", null),
+                DeckChosen = Utils.GetValue<bool>(d, "deckChosen", false),
+                DeckOffers = Utils.GetValue<List<object>>(d, "deckOffers"),
+                Deck       = Utils.GetValue<Dictionary<string, object>>(d, "deck"),
             };
         }
 
