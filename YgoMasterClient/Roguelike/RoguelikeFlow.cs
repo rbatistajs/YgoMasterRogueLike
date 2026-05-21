@@ -21,10 +21,9 @@ namespace YgoMasterClient
             }
             else if (cmd == "Roguelike.choose_deck")
             {
-                // The ActionSheet drawer has closed by now; pop the deck-select screen so
-                // back from the map returns Home, then open the map.
-                IntPtr manager = YgomGame.Menu.ContentViewControllerManager.GetManager();
-                if (manager != IntPtr.Zero) YgomSystem.UI.ViewControllerManager.PopChildViewController(manager);
+                // Close the deck-select SoloMode (takes its SoloPortal with it) so back from
+                // the map returns Home, then open the map.
+                RoguelikeSoloScreen.Close();
                 RoguelikeMapScreen.Open();
             }
         }
