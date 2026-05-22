@@ -17,6 +17,7 @@ namespace YgoMasterClient
         const string DeckGroup = Ui + ".MainArea.DeckArea.DeckGroup";
         const string ScrollView = DeckGroup + ".Scroll View2";
         const string DeckContent = ScrollView + ".Viewport.Content";
+        const string HeaderArea = Ui + ".TitleSafeArea.HeaderButtonArea"; // deck count / filter / etc.
         const string RgScrollViewPath = DeckGroup + ".RgScrollView";
         const string RgMapPath = RgScrollViewPath + ".RgViewport.RgMap";
 
@@ -28,17 +29,18 @@ namespace YgoMasterClient
         static IL2Method _scrollByTargetPos;
         static float _scrollTargetY;
         static bool _hasScrollTarget;
-        static IntPtr _selectionButtonType, _colorContainerType;
+        static bool _scrollPending;        // open: apply ScrollByTargetPos after a short delay
+        static DateTime _scrollDueAt;
+        static float _scrollContentHeight, _scrollCurY; // recompute target at fire time (vh is 0 at build)
+        static IntPtr _selectionButtonType, _colorContainerType, _profileBindingType;
         static IL2Field _selBtnOnClick;
         static IL2Property _behaviourEnabled;
 
-        // Node frame colors by state (Out = outline, Bg = rounded fill).
+        // Node frame colors by state (Out = outline). Disabled nodes also get a dark BG fill.
         static readonly Col OutDisabled = new Col { r = 0.30f, g = 0.30f, b = 0.36f, a = 1f };
         static readonly Col OutVisited  = new Col { r = 0.82f, g = 0.85f, b = 0.95f, a = 1f };
         static readonly Col OutActive   = new Col { r = 0.90f, g = 0.95f, b = 1.00f, a = 1f };
-        static readonly Col BgDisabled  = new Col { r = 0.04f, g = 0.04f, b = 0.06f, a = 0.90f };
-        static readonly Col BgVisited   = new Col { r = 0.11f, g = 0.13f, b = 0.18f, a = 0.88f };
-        static readonly Col BgActive    = new Col { r = 0.15f, g = 0.19f, b = 0.27f, a = 0.92f };
+        static readonly Col FillDisabled = new Col { r = 0.02f, g = 0.02f, b = 0.04f, a = 0.65f };
         static IL2Method _ueAddListener, _ueRemoveAll;
         static IntPtr _scrollRectType, _extScrollRectType, _imageType;
         static IL2Property _scrollRectContent, _scrollViewport, _scrollHorizontal, _scrollVertical, _scrollSensitivity, _graphicColor;
@@ -93,6 +95,7 @@ namespace YgoMasterClient
                 _selectionButtonType = selBtn.IL2Typeof();
                 _selBtnOnClick = selBtn.GetField("onClick");
                 _colorContainerType = asm.GetClass("ColorContainerGraphic", "YgomSystem.UI").IL2Typeof();
+                _profileBindingType = asm.GetClass("BindingProfileFrameIcon", "YgomGame.Menu.Common").IL2Typeof();
                 _ueAddListener = core.GetClass("UnityEvent", "UnityEngine.Events").GetMethod("AddListener");
                 _ueRemoveAll = core.GetClass("UnityEventBase", "UnityEngine.Events").GetMethod("RemoveAllListeners");
                 _behaviourEnabled = core.GetClass("Behaviour", "UnityEngine").GetProperty("enabled");
@@ -135,14 +138,19 @@ namespace YgoMasterClient
         // context (e.g. when start_run completes). Idempotent; the clone persists for the session.
         public static void CaptureMarkerSource()
         {
-            if (!_ready || _markerSource != IntPtr.Zero) return;
+            if (!_ready) return;
             try
             {
-                IntPtr home = GameObject.Find("Home");
+                IntPtr home = GameObject.Find("Home"); // only succeeds on the home screen
                 IntPtr src = home != IntPtr.Zero ? GameObject.FindGameObjectByName(home, "PlayerIcon") : IntPtr.Zero;
-                if (src == IntPtr.Zero) return;
+                if (src == IntPtr.Zero) return; // not on home -> keep whatever we cached
+                if (_markerSource != IntPtr.Zero) UnityObject.Destroy(_markerSource); // refresh with the latest
                 IntPtr clone = UnityObject.Instantiate(src);
                 UnityObject.SetName(clone, "RgMarkerSource");
+                // Freeze the binding so it keeps Home's framed (hexagon) icon. On the run screen the
+                // profile/frame data isn't in ClientWork, so a re-bind would fall back to the plain
+                // square icon. Disabling it (while the cloned sprite is the captured hexagon) pins it.
+                FreezeProfileBinding(clone);
                 UnityObject.DontDestroyOnLoad(clone);
                 GameObject.SetActive(clone, false);
                 _markerSource = clone;
@@ -157,6 +165,24 @@ namespace YgoMasterClient
             _go = go;
             try { SetupMap(go); }
             catch (Exception ex) { Console.WriteLine("[Roguelike] map build EX: " + ex); }
+            // On open the layout isn't settled yet, so ScrollByTargetPos no-ops on the first frames.
+            // Defer it (driven from Update) so it lands on the player.
+            _scrollDueAt = DateTime.UtcNow.AddMilliseconds(300);
+            _scrollPending = true;
+        }
+
+        // Driven per-frame from TradeUtils (NetworkMain.Update). Fires the deferred open-scroll once
+        // the delay elapses (acts like a coroutine WaitForSeconds).
+        public static void Update()
+        {
+            if (!_scrollPending || DateTime.UtcNow < _scrollDueAt) return;
+            _scrollPending = false;
+            // Recompute the target now: the viewport height was 0 at build time (layout not settled).
+            IntPtr deckGroup = _go != IntPtr.Zero ? GameObject.FindGameObjectByPath(_go, DeckGroup) : IntPtr.Zero;
+            float vh = deckGroup != IntPtr.Zero ? RectHeight(deckGroup) : 0;
+            _scrollTargetY = ScrollTargetY(_scrollContentHeight, _scrollCurY, vh);
+            _hasScrollTarget = vh > 0;
+            if (_extScroll != IntPtr.Zero) ApplyScroll(_extScroll);
         }
 
         // Re-render after a move. Keep the scroll container (so the scroll position is preserved
@@ -198,6 +224,25 @@ namespace YgoMasterClient
                 _extDragScrollEnabled.SetValue(thisPtr, new IntPtr(&drag));
             }
             ApplyScroll(thisPtr);
+            // First build's node styling (during OnCreatedView) gets overridden once the view fully
+            // activates; re-apply now (next frame), the timing that already works on refresh.
+            RestyleNodes(GameObject.FindGameObjectByPath(_go, RgMapPath));
+        }
+
+        // Re-apply the per-state styling to the already-built nodes (no rebuild, no re-wiring).
+        static void RestyleNodes(IntPtr ctGo)
+        {
+            if (ctGo == IntPtr.Zero) return;
+            List<RoguelikeApi.MapNode> nodes = RoguelikeApi.GetMapNodes();
+            int pos = RoguelikeApi.Position();
+            HashSet<int> reachable = Reachable(nodes, pos);
+            HashSet<int> visited = RoguelikeApi.Visited();
+            foreach (RoguelikeApi.MapNode n in nodes)
+            {
+                IntPtr node = GameObject.FindGameObjectByName(ctGo, "RgNode" + n.Id);
+                if (node == IntPtr.Zero) continue;
+                StyleNode(node, reachable.Contains(n.Id), visited.Contains(n.Id), n.Id == pos);
+            }
         }
 
         static void OnSlot(int slot)
@@ -218,7 +263,8 @@ namespace YgoMasterClient
             IntPtr deckGroup = GameObject.FindGameObjectByPath(go, DeckGroup);
             if (deckGroup == IntPtr.Zero) { Console.WriteLine("[Roguelike] map: DeckGroup not found"); return; }
 
-            Hide(go, ScrollView); // hide the game's scroll (its InfinityScroll resized our content)
+            Hide(go, ScrollView);   // hide the game's scroll (its InfinityScroll resized our content)
+            Hide(go, HeaderArea);   // hide deck count / filter / search clutter (irrelevant on the map)
 
             // RgScrollView (fills DeckGroup) + ScrollRect.
             IntPtr sv = GameObject.New();
@@ -313,7 +359,7 @@ namespace YgoMasterClient
                     WireNodeClick(node, _slotActions[slot]);
                     slot++;
                 }
-                StyleNode(node, isOpen, isVisited);
+                StyleNode(node, isOpen, isVisited, isCurrent);
             }
 
             // First build creates the marker at the spot; later renders keep it and animate it over.
@@ -321,12 +367,13 @@ namespace YgoMasterClient
             if (marker == IntPtr.Zero) PlacePlayerMarker(ct, curX, curY);
             else AnimateMarker(marker, curX, curY);
 
+            _scrollContentHeight = contentHeight;
+            _scrollCurY = curY;
             float vh = RectHeight(deckGroup);
             _scrollTargetY = ScrollTargetY(contentHeight, curY, vh);
             _hasScrollTarget = vh > 0;
             ApplyScroll(srComp); // re-applied from the Start hook on first build (post Initialize)
 
-            Console.WriteLine("[Roguelike] map nodes=" + nodes.Count + " rows=" + rows + " contentH=" + contentHeight + " pos=" + pos + " open=" + slot);
         }
 
         // Looping ping-pong scale on the choosable (reachable) nodes so the next moves stand out.
@@ -348,26 +395,88 @@ namespace YgoMasterClient
             _tPlay.Invoke(tw);
         }
 
-        // Color the Out outline + BG fill by state, after disabling the tile's ColorContainerGraphic
-        // (which would otherwise re-apply the theme color over ours). Reachable nodes also pulse and
-        // keep their SelectionButton; the rest are disabled so hover/click can't recolor them.
-        static void StyleNode(IntPtr node, bool isOpen, bool isVisited)
+        // Color the Out outline by state, after disabling the tile's ColorContainerGraphic (which
+        // would otherwise re-apply the theme color over ours). Reachable nodes also pulse and keep
+        // their SelectionButton; the rest are disabled so hover/click can't recolor them.
+        static void StyleNode(IntPtr node, bool isOpen, bool isVisited, bool isCurrent)
         {
             IntPtr outFrame = GameObject.FindGameObjectByPath(node, "Body.Out");
-            IntPtr bg = GameObject.FindGameObjectByPath(node, "Body.BG");
             DisableColorContainers(outFrame);
-            DisableColorContainers(bg);
+            // Disabled nodes get a dark rounded fill (the tile's "Over/Base" selection panel,
+            // which is rounded to match the frame), so they read clearly as locked.
+            SetDisabledFill(node, !isOpen && !isVisited);
+            // Cleared nodes (visited, but not where the player currently stands) show the check.
+            ShowCheck(node, isVisited && !isCurrent);
             if (isOpen)
             {
                 PulseNode(node);
                 SetImageColor(outFrame, OutActive);
-                SetImageColor(bg, BgActive);
             }
             else
             {
                 DisableButton(node);
                 SetImageColor(outFrame, isVisited ? OutVisited : OutDisabled);
-                SetImageColor(bg, isVisited ? BgVisited : BgDisabled);
+            }
+        }
+
+        // Show the tile's green "selected" check (IconGroup/SelectedStateToggle/IconOn/Icon) to mark
+        // a cleared node; hide the rank/rate siblings that share IconGroup.
+        static void ShowCheck(IntPtr node, bool on)
+        {
+            IntPtr ig = GameObject.FindGameObjectByPath(node, "Body.IconGroup");
+            if (ig == IntPtr.Zero) return;
+            GameObject.SetActive(ig, on);
+            if (!on) return;
+            HideChild(ig, "RateIcon");
+            HideChild(ig, "RankIcon");
+            ActivateChain(ig, "SelectedStateToggle", "IconOn", "Icon");
+        }
+
+        static void HideChild(IntPtr parent, string name)
+        {
+            IntPtr o = GameObject.FindGameObjectByPath(parent, name);
+            if (o != IntPtr.Zero) GameObject.SetActive(o, false);
+        }
+
+        static void ActivateChain(IntPtr root, params string[] names)
+        {
+            IntPtr cur = root;
+            foreach (string n in names)
+            {
+                cur = GameObject.FindGameObjectByPath(cur, n);
+                if (cur == IntPtr.Zero) return;
+                GameObject.SetActive(cur, true);
+            }
+        }
+
+        static void SetDisabledFill(IntPtr node, bool on)
+        {
+            IntPtr over = GameObject.FindGameObjectByPath(node, "Body.Over");
+            if (over == IntPtr.Zero) return;
+            GameObject.SetActive(over, on);
+            if (!on) return;
+            DisableTweens(over);                       // stop the hover alpha fade
+            SetFill(GameObject.GetTransform(over));     // match the node bounds
+            IntPtr baseGo = GameObject.FindGameObjectByPath(over, "Base");
+            if (baseGo == IntPtr.Zero) return;
+            DisableColorContainers(baseGo);
+            SetFill(GameObject.GetTransform(baseGo));
+            SetImageColor(baseGo, FillDisabled);
+        }
+
+        // Disable any Tween* behaviour on a GameObject (so it stops animating alpha/etc).
+        static void DisableTweens(IntPtr go)
+        {
+            if (_behaviourEnabled == null) return;
+            IntPtr[] comps = GameObject.GetComponents(go);
+            if (comps == null) return;
+            csbool off = false;
+            foreach (IntPtr c in comps)
+            {
+                IntPtr cls = Import.Object.il2cpp_object_get_class(c);
+                string name = System.Runtime.InteropServices.Marshal.PtrToStringAnsi(Import.Class.il2cpp_class_get_name(cls));
+                if (name != null && name.StartsWith("Tween"))
+                    _behaviourEnabled.GetSetMethod().Invoke(c, new IntPtr[] { new IntPtr(&off) });
             }
         }
 
@@ -397,6 +506,18 @@ namespace YgoMasterClient
         {
             IntPtr img = go != IntPtr.Zero ? GameObject.GetComponent(go, _imageType) : IntPtr.Zero;
             if (img != IntPtr.Zero) _graphicColor.GetSetMethod().Invoke(img, new IntPtr[] { new IntPtr(&c) });
+        }
+
+        // Disable the BindingProfileFrameIcon in a cloned PlayerIcon so it stops re-binding (which,
+        // off the home screen, drops back to the plain square icon).
+        static void FreezeProfileBinding(IntPtr root)
+        {
+            if (_profileBindingType == IntPtr.Zero || _behaviourEnabled == null) return;
+            IntPtr iconFull = GameObject.FindGameObjectByName(root, "IconFull");
+            IntPtr binding = iconFull != IntPtr.Zero ? GameObject.GetComponent(iconFull, _profileBindingType) : IntPtr.Zero;
+            if (binding == IntPtr.Zero) return;
+            csbool off = false;
+            _behaviourEnabled.GetSetMethod().Invoke(binding, new IntPtr[] { new IntPtr(&off) });
         }
 
         static float RectHeight(IntPtr go)
@@ -582,8 +703,9 @@ namespace YgoMasterClient
             _ueAddListener.Invoke(onClickObj.ptr, new IntPtr[] { cb });
         }
 
-        // Keep the "Out" outline + "BG" rounded fill of a cloned deck-box tile (hide case, text,
-        // icons, ...). BG gives the node a colored background per state.
+        // Keep only the "Out" rounded outline of a cloned deck-box tile (hide BG fill, case, text,
+        // icons, ...). The tile "BG" is a full-size square panel that doesn't match the rounded
+        // shape, so we don't show it.
         static void KeepFrame(IntPtr node)
         {
             IntPtr body = GameObject.FindGameObjectByPath(node, "Body");
@@ -595,8 +717,7 @@ namespace YgoMasterClient
                 IntPtr child = Transform.GetChild(bt, i);
                 if (child == IntPtr.Zero) continue;
                 IntPtr cgo = Component.GetGameObject(child);
-                string name = UnityObject.GetName(cgo);
-                GameObject.SetActive(cgo, name == "Out" || name == "BG");
+                GameObject.SetActive(cgo, UnityObject.GetName(cgo) == "Out");
             }
         }
 
