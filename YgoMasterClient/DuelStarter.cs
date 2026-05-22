@@ -394,6 +394,8 @@ namespace YgomSystem.Network
 
                 YgomGame.Menu.ProfileReplayViewController.OnNetworkComplete(thisPtr, cmd);
 
+                YgoMasterClient.RoguelikeFlow.OnNetworkComplete(cmd);
+
                 if (YgomGame.Room.RoomCreateViewController.IsHacked)
                 {
                     switch (cmd)
@@ -1928,6 +1930,7 @@ namespace YgomSystem.UI
         static IL2Method methodPushChildViewControllerObj;
         static IL2Method methodSwapBottomChildViewController;
         static IL2Method methodSwapTopChildViewController;
+        static IL2Method methodSwapTopChildViewControllerWithArgs;
         static IL2Method methodGetStackTopViewController;
         static IL2Method methodLoadViewControllerPrefab;
         static IL2Method methodGetViewControllerT;
@@ -1952,7 +1955,8 @@ namespace YgomSystem.UI
             methodPushChildViewControllerWithArgs = classInfo.GetMethod("PushChildViewController", x => x.GetParameters().Length == 2 && x.GetParameters()[0].Name == "prefabpath");
             methodPushChildViewControllerObj = classInfo.GetMethod("PushChildViewController", x => x.GetParameters()[0].Name == "prefab");
             methodSwapBottomChildViewController = classInfo.GetMethod("SwapBottomChildViewController", x => x.GetParameters()[0].Name == "prefabpath");
-            methodSwapTopChildViewController = classInfo.GetMethod("SwapTopChildViewController", x => x.GetParameters()[0].Name == "prefabpath");
+            methodSwapTopChildViewController = classInfo.GetMethod("SwapTopChildViewController", x => x.GetParameters().Length == 1 && x.GetParameters()[0].Name == "prefabpath");
+            methodSwapTopChildViewControllerWithArgs = classInfo.GetMethod("SwapTopChildViewController", x => x.GetParameters().Length == 2 && x.GetParameters()[0].Name == "prefabpath");
             methodGetStackTopViewController = classInfo.GetMethod("GetStackTopViewController");
             hookLoadViewControllerPrefab = new Hook<Del_LoadViewControllerPrefab>(LoadViewControllerPrefab, classInfo.GetMethod("LoadViewControllerPrefab"));
             methodGetViewControllerT = classInfo.GetMethod("GetViewController");
@@ -1982,6 +1986,13 @@ namespace YgomSystem.UI
         public static void SwapTopChildViewController(IntPtr thisPtr, string prefabpath)
         {
             methodSwapTopChildViewController.Invoke(thisPtr, new IntPtr[] { new IL2String(prefabpath).ptr });
+        }
+
+        // Swap the top VC for a new one with pre-built IL2CPP args (Int32-safe), in one op (no
+        // pop-to-parent flicker).
+        public static void SwapTopChildViewControllerArgs(IntPtr thisPtr, string prefabpath, IntPtr argsPtr)
+        {
+            methodSwapTopChildViewControllerWithArgs.Invoke(thisPtr, new IntPtr[] { new IL2String(prefabpath).ptr, argsPtr });
         }
 
         public static void PushChildViewController(IntPtr thisPtr, string prefabpath)
@@ -2023,6 +2034,13 @@ namespace YgomSystem.UI
             {
                 new IL2String(prefabpath).ptr, YgomMiniJSON.Json.Deserialize(MiniJSON.Json.Serialize(args))
             });
+        }
+
+        // Push with a pre-built IL2CPP args object (bypasses the JSON round-trip so int
+        // values stay Int32 — some view controllers hard-cast args to Int32).
+        public static void PushChildViewControllerArgs(IntPtr thisPtr, string prefabpath, IntPtr argsPtr)
+        {
+            methodPushChildViewControllerWithArgs.Invoke(thisPtr, new IntPtr[] { new IL2String(prefabpath).ptr, argsPtr });
         }
 
         public static void PushChildViewController(IntPtr thisPtr, IntPtr prefab)

@@ -481,6 +481,18 @@ namespace YgoMaster
                                     case "CardFile.update_card_order":// v2.4.0
                                         Act_CardFileUpdateCardOrder(gameServerWebRequest);
                                         break;
+                                    case "Roguelike.start_run":
+                                        Act_RoguelikeStartRun(gameServerWebRequest);
+                                        break;
+                                    case "Roguelike.abandon_run":
+                                        Act_RoguelikeAbandonRun(gameServerWebRequest);
+                                        break;
+                                    case "Roguelike.choose_deck":
+                                        Act_RoguelikeChooseDeck(gameServerWebRequest);
+                                        break;
+                                    case "Roguelike.move":
+                                        Act_RoguelikeMove(gameServerWebRequest);
+                                        break;
                                     default:
                                         Utils.LogInfo("Unhandled act " + actsHeader);
                                         Debug.WriteLine("Unhandled act " + actsHeader + " " + MiniJSON.Json.Serialize(vals));
