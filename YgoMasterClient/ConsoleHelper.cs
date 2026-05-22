@@ -803,6 +803,112 @@ namespace YgoMasterClient
                         }
                     }
                     break;
+                case "vcdump":// Dump the current top view controller's hierarchy (compact: names + components) to _tmp. Optional depth arg (default 6).
+                    {
+                        int depth = 6;
+                        if (splitted.Length > 1 && int.TryParse(splitted[1], out int parsedDepth)) depth = parsedDepth;
+                        IntPtr manager = YgomGame.Menu.ContentViewControllerManager.GetManager();
+                        if (manager == IntPtr.Zero) { Console.WriteLine("[vcdump] no manager"); break; }
+                        IntPtr top = YgomSystem.UI.ViewControllerManager.GetStackTopViewController(manager);
+                        if (top == IntPtr.Zero) { Console.WriteLine("[vcdump] no top VC"); break; }
+                        string className = "UNKNOWN";
+                        IntPtr vcClass = Import.Object.il2cpp_object_get_class(top);
+                        if (vcClass != IntPtr.Zero)
+                            className = Marshal.PtrToStringAnsi(Import.Class.il2cpp_class_get_name(vcClass));
+                        IntPtr go = UnityEngine.Component.GetGameObject(top);
+                        string tree = RoguelikeDebug.DumpTree(go, depth);
+                        string file = "vc_" + className + ".txt";
+                        RoguelikeDebug.Write(file, tree);
+                        Console.WriteLine("[vcdump] " + className + " depth=" + depth + " -> _tmp/" + file);
+                    }
+                    break;
+                case "compdump":// Dump a GameObject's component state (RectTransform/ScrollRect/...) to _tmp/comp.txt. Usage: compdump <path under top VC>
+                    {
+                        if (splitted.Length < 2) { Console.WriteLine("[compdump] usage: compdump <path under top VC>"); break; }
+                        string path = string.Join(" ", splitted, 1, splitted.Length - 1);
+                        IntPtr manager = YgomGame.Menu.ContentViewControllerManager.GetManager();
+                        if (manager == IntPtr.Zero) { Console.WriteLine("[compdump] no manager"); break; }
+                        IntPtr top = YgomSystem.UI.ViewControllerManager.GetStackTopViewController(manager);
+                        if (top == IntPtr.Zero) { Console.WriteLine("[compdump] no top VC"); break; }
+                        IntPtr go = UnityEngine.Component.GetGameObject(top);
+                        IntPtr target = UnityEngine.GameObject.FindGameObjectByPath(go, path);
+                        if (target == IntPtr.Zero) { Console.WriteLine("[compdump] not found: " + path); break; }
+                        string file = "comp_" + UnityEngine.UnityObject.GetName(target) + ".txt";
+                        RoguelikeDebug.Write(file, RoguelikeDebug.DumpComponentsState(target));
+                        Console.WriteLine("[compdump] " + path + " -> _tmp/" + file);
+                    }
+                    break;
+                case "godump":// Full JSON dump (component member values) of a GameObject to _tmp/go_<name>.json. Usage: godump <path under top VC>
+                    {
+                        if (splitted.Length < 2) { Console.WriteLine("[godump] usage: godump <path under top VC>"); break; }
+                        string gpath = string.Join(" ", splitted, 1, splitted.Length - 1);
+                        IntPtr gmanager = YgomGame.Menu.ContentViewControllerManager.GetManager();
+                        if (gmanager == IntPtr.Zero) { Console.WriteLine("[godump] no manager"); break; }
+                        IntPtr gtop = YgomSystem.UI.ViewControllerManager.GetStackTopViewController(gmanager);
+                        if (gtop == IntPtr.Zero) { Console.WriteLine("[godump] no top VC"); break; }
+                        IntPtr ggo = UnityEngine.Component.GetGameObject(gtop);
+                        IntPtr gtarget = UnityEngine.GameObject.FindGameObjectByPath(ggo, gpath);
+                        if (gtarget == IntPtr.Zero) { Console.WriteLine("[godump] not found: " + gpath); break; }
+                        string gfile = "go_" + UnityEngine.UnityObject.GetName(gtarget) + ".json";
+                        RoguelikeDebug.Write(gfile, UnityEngine.GameObject.Dump(gtarget));
+                        Console.WriteLine("[godump] " + gpath + " -> _tmp/" + gfile);
+                    }
+                    break;
+                case "treedump":// Dump a GameObject's subtree (names + components) to _tmp/tree_<name>.txt. Usage: treedump <path under top VC> [depth]
+                    {
+                        if (splitted.Length < 2) { Console.WriteLine("[treedump] usage: treedump <path under top VC> [depth]"); break; }
+                        int tdepth = 4;
+                        int tlast = splitted.Length;
+                        if (splitted.Length > 2 && int.TryParse(splitted[splitted.Length - 1], out int parsedTd)) { tdepth = parsedTd; tlast = splitted.Length - 1; }
+                        string tpath = string.Join(" ", splitted, 1, tlast - 1);
+                        IntPtr tmanager = YgomGame.Menu.ContentViewControllerManager.GetManager();
+                        if (tmanager == IntPtr.Zero) { Console.WriteLine("[treedump] no manager"); break; }
+                        IntPtr ttop = YgomSystem.UI.ViewControllerManager.GetStackTopViewController(tmanager);
+                        if (ttop == IntPtr.Zero) { Console.WriteLine("[treedump] no top VC"); break; }
+                        IntPtr tgo = UnityEngine.Component.GetGameObject(ttop);
+                        IntPtr ttarget = UnityEngine.GameObject.FindGameObjectByPath(tgo, tpath);
+                        if (ttarget == IntPtr.Zero) { Console.WriteLine("[treedump] not found: " + tpath); break; }
+                        string tfile = "tree_" + UnityEngine.UnityObject.GetName(ttarget) + ".txt";
+                        RoguelikeDebug.Write(tfile, RoguelikeDebug.DumpTree(ttarget, tdepth));
+                        Console.WriteLine("[treedump] " + tpath + " depth=" + tdepth + " -> _tmp/" + tfile);
+                    }
+                    break;
+                case "rgpush":// Push an arbitrary view controller prefab standalone (dev: test reuse bases). Usage: rgpush <prefab/path>
+                    {
+                        if (splitted.Length < 2) { Console.WriteLine("[rgpush] usage: rgpush <prefab/path>"); break; }
+                        IntPtr manager = YgomGame.Menu.ContentViewControllerManager.GetManager();
+                        if (manager == IntPtr.Zero) { Console.WriteLine("[rgpush] no manager"); break; }
+                        YgomSystem.UI.ViewControllerManager.PushChildViewController(manager, splitted[1]);
+                        Console.WriteLine("[rgpush] pushed " + splitted[1]);
+                    }
+                    break;
+                case "rgabandon":// dev: abandon the current roguelike run (reset for testing)
+                    RoguelikeApi.AbandonRun();
+                    break;
+                case "clsdump":// dev: dump an IL2 class's methods to _tmp. Usage: clsdump <Namespace>.<Class> [assembly]
+                    {
+                        if (splitted.Length < 2) { Console.WriteLine("[clsdump] usage: clsdump <Namespace>.<Class> [assembly]"); break; }
+                        string full = splitted[1];
+                        int dot = full.LastIndexOf('.');
+                        string ns = dot > 0 ? full.Substring(0, dot) : "";
+                        string cls = dot > 0 ? full.Substring(dot + 1) : full;
+                        string asm = splitted.Length > 2 ? splitted[2] : "Assembly-CSharp";
+                        IL2Class c = Assembler.GetAssembly(asm).GetClass(cls, ns);
+                        if (c == null) { Console.WriteLine("[clsdump] class not found: " + full); break; }
+                        StringBuilder sb = new StringBuilder();
+                        sb.Append(ns).Append('.').Append(cls).Append(" fields:\n");
+                        foreach (IL2Field f in c.GetFields())
+                        {
+                            string ft = "?";
+                            try { ft = f.ReturnType != null ? f.ReturnType.Name : "?"; } catch { }
+                            sb.Append("  ").Append(f.Name).Append(" : ").Append(ft).Append('\n');
+                        }
+                        sb.Append('\n').Append(cls).Append(" methods:\n");
+                        foreach (IL2Method m in c.GetMethods()) sb.Append("  ").Append(m.Name).Append('(').Append(m.GetParameters().Length).Append(")\n");
+                        RoguelikeDebug.Write("cls_" + cls + ".txt", sb.ToString());
+                        Console.WriteLine("[clsdump] " + cls + " -> _tmp/cls_" + cls + ".txt");
+                    }
+                    break;
                 case "pvpops":// Generates enum for YgoMaster.PvpOperation
                     {
                         using (TextWriter tw = File.CreateText(Path.Combine(Program.CurrentDir, "PvpOps.txt")))
