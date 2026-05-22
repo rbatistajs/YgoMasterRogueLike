@@ -156,4 +156,18 @@
   <Target Name="AfterBuild">
   </Target>
   -->
+
+  <!-- Dev convenience: copy only the built exe to the Goat install after each
+       build. No-op if the folder doesn't exist. -->
+  <PropertyGroup>
+    <GoatInstallDir>D:\SteamLibrary\steamapps\common\Yu-Gi-Oh!  Master Duel\YgoMasterLE - Goat</GoatInstallDir>
+  </PropertyGroup>
+  <Target Name="CopyToGoatInstall" AfterTargets="Build"
+          Condition="Exists('$(GoatInstallDir)')">
+    <Copy SourceFiles="$(OutputPath)YgoMaster.exe"
+          DestinationFolder="$(GoatInstallDir)"
+          SkipUnchangedFiles="true" />
+    <Message Text="[Goat] Copied YgoMaster.exe -&gt; $(GoatInstallDir)"
+             Importance="high" />
+  </Target>
 </Project>
