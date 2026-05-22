@@ -32,14 +32,11 @@ namespace YgoMasterClient
         static bool _scrollPending;        // open: apply ScrollByTargetPos after a short delay
         static DateTime _scrollDueAt;
         static float _scrollContentHeight, _scrollCurY; // recompute target at fire time (vh is 0 at build)
-        static IntPtr _selectionButtonType, _colorContainerType, _profileBindingType;
+        static IntPtr _selectionButtonType, _colorContainerType, _profileBindingType, _spriteType;
         static IL2Field _selBtnOnClick;
-        static IL2Property _behaviourEnabled;
+        static IL2Property _behaviourEnabled, _imageSprite;
+        static readonly System.Collections.Generic.Dictionary<string, IntPtr> _iconCache = new System.Collections.Generic.Dictionary<string, IntPtr>();
 
-        // Node frame colors by state (Out = outline). Disabled nodes also get a dark BG fill.
-        static readonly Col OutDisabled = new Col { r = 0.30f, g = 0.30f, b = 0.36f, a = 1f };
-        static readonly Col OutVisited  = new Col { r = 0.82f, g = 0.85f, b = 0.95f, a = 1f };
-        static readonly Col OutActive   = new Col { r = 0.90f, g = 0.95f, b = 1.00f, a = 1f };
         static readonly Col FillDisabled = new Col { r = 0.02f, g = 0.02f, b = 0.04f, a = 0.65f };
         static IL2Method _ueAddListener, _ueRemoveAll;
         static IntPtr _scrollRectType, _extScrollRectType, _imageType;
@@ -96,6 +93,8 @@ namespace YgoMasterClient
                 _selBtnOnClick = selBtn.GetField("onClick");
                 _colorContainerType = asm.GetClass("ColorContainerGraphic", "YgomSystem.UI").IL2Typeof();
                 _profileBindingType = asm.GetClass("BindingProfileFrameIcon", "YgomGame.Menu.Common").IL2Typeof();
+                _spriteType = core.GetClass("Sprite", "UnityEngine").IL2Typeof();
+                _imageSprite = ui.GetClass("Image", "UnityEngine.UI").GetProperty("sprite");
                 _ueAddListener = core.GetClass("UnityEvent", "UnityEngine.Events").GetMethod("AddListener");
                 _ueRemoveAll = core.GetClass("UnityEventBase", "UnityEngine.Events").GetMethod("RemoveAllListeners");
                 _behaviourEnabled = core.GetClass("Behaviour", "UnityEngine").GetProperty("enabled");
@@ -241,7 +240,7 @@ namespace YgoMasterClient
             {
                 IntPtr node = GameObject.FindGameObjectByName(ctGo, "RgNode" + n.Id);
                 if (node == IntPtr.Zero) continue;
-                StyleNode(node, reachable.Contains(n.Id), visited.Contains(n.Id), n.Id == pos);
+                StyleNode(node, n.Type, reachable.Contains(n.Id), visited.Contains(n.Id), n.Id == pos);
             }
         }
 
@@ -359,7 +358,7 @@ namespace YgoMasterClient
                     WireNodeClick(node, _slotActions[slot]);
                     slot++;
                 }
-                StyleNode(node, isOpen, isVisited, isCurrent);
+                StyleNode(node, n.Type, isOpen, isVisited, isCurrent);
             }
 
             // First build creates the marker at the spot; later renders keep it and animate it over.
@@ -398,7 +397,7 @@ namespace YgoMasterClient
         // Color the Out outline by state, after disabling the tile's ColorContainerGraphic (which
         // would otherwise re-apply the theme color over ours). Reachable nodes also pulse and keep
         // their SelectionButton; the rest are disabled so hover/click can't recolor them.
-        static void StyleNode(IntPtr node, bool isOpen, bool isVisited, bool isCurrent)
+        static void StyleNode(IntPtr node, string type, bool isOpen, bool isVisited, bool isCurrent)
         {
             IntPtr outFrame = GameObject.FindGameObjectByPath(node, "Body.Out");
             DisableColorContainers(outFrame);
@@ -407,17 +406,88 @@ namespace YgoMasterClient
             SetDisabledFill(node, !isOpen && !isVisited);
             // Cleared nodes (visited, but not where the player currently stands) show the check.
             ShowCheck(node, isVisited && !isCurrent);
-            if (isOpen)
+            // Outline = node-type color, brightness by state (reachable bright, visited mid, locked dim).
+            float bright = isOpen ? 1f : (isVisited ? 0.8f : 0.45f);
+            SetImageColor(outFrame, Scale(TypeColor(type), bright));
+            SetNodeIcon(node, type, Scale(TypeColor(type), bright));
+            if (isOpen) PulseNode(node);
+            else DisableButton(node);
+        }
+
+        // Solo-mode map glyph reused per node type.
+        static string IconNameFor(string t)
+        {
+            switch (t)
             {
-                PulseNode(node);
-                SetImageColor(outFrame, OutActive);
-            }
-            else
-            {
-                DisableButton(node);
-                SetImageColor(outFrame, isVisited ? OutVisited : OutDisabled);
+                case "elite":  return "GUI_SoloSelectChapter_Map_Icon_Goal_S";
+                case "boss":   return "GUI_SoloSelectChapter_Map_Icon_Goal";
+                case "reward": return "GUI_SoloSelectChapter_Map_Icon_Reward";
+                case "shop":   return "Connectingicon_card";
+                case "event":  return "GUI_SoloSelectChapter_Map_Icon_Scenario";
+                default:       return "GUI_SoloSelectChapter_Map_Icon_Duel";
             }
         }
+
+        // Centered glyph (own Image child) showing the node type, tinted to match.
+        static void SetNodeIcon(IntPtr node, string type, Col col)
+        {
+            IntPtr sprite = FindIcon(IconNameFor(type));
+            if (sprite == IntPtr.Zero) return;
+            IntPtr icon = GameObject.FindGameObjectByName(node, "RgIcon");
+            if (icon == IntPtr.Zero)
+            {
+                icon = GameObject.New();
+                UnityObject.SetName(icon, "RgIcon");
+                GameObject.AddComponent(icon, _rectType);
+                GameObject.AddComponent(icon, _imageType);
+                Transform.SetParent(GameObject.GetTransform(icon), GameObject.GetTransform(node));
+                PlaceNode(icon, 0, 0, new AssetHelper.Vector2(64, 64));
+                Transform.SetAsLastSibling(GameObject.GetTransform(icon));
+            }
+            IntPtr img = GameObject.GetComponent(icon, _imageType);
+            if (img == IntPtr.Zero) return;
+            _imageSprite.GetSetMethod().Invoke(img, new IntPtr[] { sprite });
+            _graphicColor.GetSetMethod().Invoke(img, new IntPtr[] { new IntPtr(&col) });
+        }
+
+        // Find a loaded sprite by name (Solo atlas icons), cached after the first lookup.
+        static IntPtr FindIcon(string name)
+        {
+            IntPtr cached;
+            if (_iconCache.TryGetValue(name, out cached) && cached != IntPtr.Zero) return cached;
+            try
+            {
+                IL2Method findAll = Assembler.GetAssembly("UnityEngine.CoreModule").GetClass("Resources", "UnityEngine")
+                    .GetMethod("FindObjectsOfTypeAll", m => m.GetParameters().Length == 1);
+                IL2Object res = findAll.Invoke(new IntPtr[] { _spriteType });
+                if (res == null || res.ptr == IntPtr.Zero) return IntPtr.Zero;
+                IL2Array<IntPtr> arr = new IL2Array<IntPtr>(res.ptr);
+                for (int i = 0; i < arr.Length; i++)
+                {
+                    IntPtr sp = arr[i];
+                    if (sp == IntPtr.Zero) continue;
+                    if (UnityObject.GetName(sp) == name) { _iconCache[name] = sp; return sp; }
+                }
+            }
+            catch (Exception ex) { Console.WriteLine("[Roguelike] FindIcon EX: " + ex); }
+            return IntPtr.Zero;
+        }
+
+        // Base outline color per node type.
+        static Col TypeColor(string t)
+        {
+            switch (t)
+            {
+                case "elite":  return new Col { r = 0.74f, g = 0.45f, b = 0.96f, a = 1f }; // purple
+                case "boss":   return new Col { r = 1.00f, g = 0.34f, b = 0.34f, a = 1f }; // red
+                case "event":  return new Col { r = 0.38f, g = 0.84f, b = 0.93f, a = 1f }; // cyan
+                case "shop":   return new Col { r = 1.00f, g = 0.82f, b = 0.30f, a = 1f }; // gold
+                case "reward": return new Col { r = 0.45f, g = 0.90f, b = 0.50f, a = 1f }; // green
+                default:       return new Col { r = 0.82f, g = 0.88f, b = 1.00f, a = 1f }; // duel / unknown
+            }
+        }
+
+        static Col Scale(Col c, float f) { return new Col { r = c.r * f, g = c.g * f, b = c.b * f, a = c.a }; }
 
         // Show the tile's green "selected" check (IconGroup/SelectedStateToggle/IconOn/Icon) to mark
         // a cleared node; hide the rank/rate siblings that share IconGroup.

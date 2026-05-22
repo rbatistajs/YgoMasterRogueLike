@@ -909,6 +909,33 @@ namespace YgoMasterClient
                         Console.WriteLine("[clsdump] " + cls + " -> _tmp/cls_" + cls + ".txt");
                     }
                     break;
+                case "spritedump":// dev: list all loaded sprites (name [atlas]) to _tmp/sprites.txt. Optional name filter: spritedump <substr>
+                    {
+                        string filter = splitted.Length > 1 ? splitted[1].ToLower() : null;
+                        IL2Class resClass = Assembler.GetAssembly("UnityEngine.CoreModule").GetClass("Resources", "UnityEngine");
+                        IL2Method findAll = resClass.GetMethod("FindObjectsOfTypeAll", x => x.GetParameters().Length == 1);
+                        IntPtr spriteType = Assembler.GetAssembly("UnityEngine.CoreModule").GetClass("Sprite", "UnityEngine").IL2Typeof();
+                        IL2Object res = findAll.Invoke(new IntPtr[] { spriteType });
+                        if (res == null || res.ptr == IntPtr.Zero) { Console.WriteLine("[spritedump] no result"); break; }
+                        IL2Array<IntPtr> arr = new IL2Array<IntPtr>(res.ptr);
+                        SortedSet<string> set = new SortedSet<string>();
+                        for (int i = 0; i < arr.Length; i++)
+                        {
+                            IntPtr sp = arr[i];
+                            if (sp == IntPtr.Zero) continue;
+                            string nm = UnityEngine.UnityObject.GetName(sp);
+                            if (string.IsNullOrEmpty(nm)) continue;
+                            if (filter != null && nm.ToLower().IndexOf(filter) < 0) continue;
+                            string tex = "";
+                            try { IntPtr t = AssetHelper.GetSpriteTexture(sp); if (t != IntPtr.Zero) tex = UnityEngine.UnityObject.GetName(t); } catch { }
+                            set.Add(nm + "  [" + tex + "]");
+                        }
+                        StringBuilder ssb = new StringBuilder();
+                        foreach (string s in set) ssb.Append(s).Append('\n');
+                        RoguelikeDebug.Write("sprites.txt", ssb.ToString());
+                        Console.WriteLine("[spritedump] " + set.Count + " sprites -> _tmp/sprites.txt" + (filter != null ? " (filter=" + filter + ")" : ""));
+                    }
+                    break;
                 case "pvpops":// Generates enum for YgoMaster.PvpOperation
                     {
                         using (TextWriter tw = File.CreateText(Path.Combine(Program.CurrentDir, "PvpOps.txt")))

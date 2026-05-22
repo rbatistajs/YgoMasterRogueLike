@@ -10,7 +10,7 @@ namespace YgoMasterClient
     // building the Roguelike UI (GameObject hierarchies, state, etc.). Not for production.
     static class RoguelikeDebug
     {
-        public static string Dir = @"D:\www\ygomaster-fork\YgoMaster\_tmp";
+        public static string Dir = @"D:\www\ygomaster-fork\YgoMasterRogueLike\_tmp";
 
         public static void Write(string name, string content)
         {
