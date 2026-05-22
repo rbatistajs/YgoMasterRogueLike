@@ -361,3 +361,57 @@ dá pra navegar de baixo até o boss com `position`/`visited` persistidos; troca
 > direto (nova/continua conforme estado, sem o menu). Botão do topo (`HeaderButtonGroup`) →
 > editor do deck da run; footer → Abandonar. As telas em SoloMode (deck-select/map) são
 > substituídas.
+
+---
+
+## M4 — Duelo a partir do nó + reward básico (spec)
+
+Clicar num nó de **combate** (`duel`/`elite`/`boss`) inicia um **duelo de verdade** com o
+deck da run contra um oponente. Vitória dá recompensa e avança; **derrota encerra a run**.
+Nós não-combate (`reward`/`shop`/`event`) ainda só movem (ações deles = M5/M8).
+
+### Decisões (2026-05-22)
+- **Oponentes**: pasta própria `DataLE/Roguelike/Opponents/*.json` (decks de inimigo,
+  formato deck do projeto). Sorteio por seed da run. (boss/elite podem ganhar sub-pools
+  depois — M7.)
+- **Derrota encerra a run** (`active=false`), antecipando parte do M7.
+
+### Fluxo
+- Mapa → clicar nó de combate alcançável → em vez de só `move`, abre o **duelo**.
+- Reusa o fluxo Solo do jogo: `Solo/SoloStartProduction` + injeção de `duelStarterData`
+  no hook `Duel_begin` (mesmo mecanismo que o projeto já usa pra duelos custom). Player =
+  deck da run; oponente = deck sorteado de `Opponents`.
+- Fim do duelo (`Duel.end`): client avisa o server do resultado.
+  - **Vitória** → marca nó visitado, `position = nó`, credita moeda (reward por tipo),
+    volta ao mapa.
+  - **Derrota** → `active=false` (run encerrada), volta à Home.
+
+### Spike (validar primeiro)
+Iniciar um duelo a partir da tela do mapa com **player + opponent decks arbitrários** via
+o fluxo Solo, e **detectar o resultado** (win/lose) roteando de volta ao mapa roguelike.
+O Goat fez algo assim (CpuContest/solo gates) mas não está neste clone; a base Solo
+(`Act_Solo`, `SoloStartProductionViewController`, injeção em `Duel_begin`) está.
+
+### Acts (server)
+- `Roguelike.start_duel { nodeId }` — valida nó de combate alcançável → escolhe oponente →
+  monta os dados do duelo (player=run deck, opp=opponent) → responde o que o client precisa
+  pra abrir o duelo.
+- `Roguelike.duel_result { nodeId, win }` — vitória: visited+position+moeda; derrota: encerra.
+
+### Modelo (`roguelike.json`, adições)
+- `currency` (int) — moeda da run, creditada por vitória.
+- (opcional) `pendingDuelNode` — nó em duelo, pra validar o `duel_result`.
+
+### Client
+- `RoguelikeMapScreen`: clique em nó de combate → `start_duel` em vez de `move`.
+- Reusar/estender a ponte de início de duelo do `DuelStarter` (Solo) com os decks da run.
+- No `Duel.end`, mandar `duel_result`; reabrir o mapa (ou Home se derrota).
+
+### Fora do M4
+Booster/escolha de cartas (M5), editor do deck da run (M6), HP/gating boss e vitória da run
+(M7), loja/eventos (M8). Reward = só moeda por enquanto.
+
+### Pronto quando (M4)
+Clicar num nó de duelo abre um duelo real (run deck vs oponente); vencer credita moeda,
+marca o nó e volta ao mapa avançado; perder encerra a run. Trocar decks em
+`DataLE/Roguelike/Opponents` muda os inimigos sem recompilar.
