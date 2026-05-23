@@ -38,50 +38,6 @@ namespace YgoMaster
             return true;
         }
 
-        // Load card content + allocate engine work memory so the DLL_CardGet* queries are usable
-        // without running a duel (deck builder / card inspection).
-        public bool InitForCardQueries()
-        {
-            if (!InitContent()) return false;
-            int num = DLL_SetWorkMemory(IntPtr.Zero);
-            DLL_SetWorkMemory(Marshal.AllocHGlobal(num));
-            return true;
-        }
-
-        public int GetAttribute(int cardId) { return DLL_CardGetAttr(cardId); }   // element (1..7)
-        public int GetRace(int cardId) { return DLL_CardGetType(cardId); }        // monster type/race
-        public int GetFrame(int cardId) { return DLL_CardGetFrame(cardId); }      // CardFrame
-        public int GetLevel(int cardId) { return DLL_CardGetLevel(cardId); }
-        public int CheckName(int cardId, int nameType) { return DLL_CardCheckName(cardId, nameType); } // CARD_Named (archetype)
-        public int GetLinkNum(int cardId) { return DLL_CardGetLinkNum(cardId); }
-        public int GetLinkMask(int cardId) { return DLL_CardGetLinkMask(cardId); }
-
-        // Call DLL_CardGetLinkCards directly (NOT gated on GetLinkNum). Fills `buf` and returns the
-        // dll's return value: the count of 16-bit card ids (each int packs two: lo16 then hi16).
-        public int GetLinkCardsRaw(int cardId, int[] buf)
-        {
-            GCHandle h = GCHandle.Alloc(buf, GCHandleType.Pinned);
-            try { return DLL_CardGetLinkCards(cardId, h.AddrOfPinnedObject()); }
-            finally { h.Free(); }
-        }
-
-        // The Deck-Editor "Related Cards" of a card (deduped). Unpacks DLL_CardGetLinkCards' buffer
-        // of 16-bit ids. This is the game's exact related list (e.g. Blue-Eyes -> Maiden with Eyes
-        // of Blue, Sage with Eyes of Blue, Paladin of White Dragon, ...).
-        public List<int> GetRelatedCards(int cardId)
-        {
-            int[] buf = new int[1024];
-            int ret = GetLinkCardsRaw(cardId, buf);
-            List<int> result = new List<int>();
-            HashSet<int> seen = new HashSet<int>();
-            for (int j = 0; j < ret && j < buf.Length * 2; j++)
-            {
-                int v = (j % 2 == 0) ? (buf[j / 2] & 0xFFFF) : ((buf[j / 2] >> 16) & 0xFFFF);
-                if (v != 0 && seen.Add(v)) result.Add(v);
-            }
-            return result;
-        }
-
         [DllImport(dllName)]
         private static extern int DLL_CardCheckName(int cardId, int nameType);
         [DllImport(dllName)]

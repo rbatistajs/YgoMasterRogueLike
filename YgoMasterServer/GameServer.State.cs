@@ -762,10 +762,6 @@ namespace YgoMaster
                             cpuContest.Run();
                             Environment.Exit(0);
                             break;
-                        case "--create-deck":// Builds weak NPC decks into Roguelike/Opponents by element/type/genre/link
-                            new RoguelikeDeckBuilder(dataDirectory, CardRare).Run(args, i + 1);
-                            Environment.Exit(0);
-                            break;
                         case "--missing-cards":// Dumps cards which are in the data files but not in the card list
                             DumpMissingCards();
                             break;
