@@ -172,8 +172,9 @@ pool — picked server-side and seeded, so a resumed duel reproduces it:
   spell/trap: `normal` / `counter` / `field` / `equip` / `continuous` / `quickplay` / `ritual`.
 - `minAtk` / `maxAtk` / `minDef` / `maxDef` / `minLevel` / `maxLevel` — numeric filters (monsters).
 - `source` — `deck` (default) draws from a deck via `deck_owner` (`own` (default) / `rival` / `p1` /
-  `p2`); `any` draws from the configurable card pool (below). Duplicate picks on a side are avoided;
-  an empty pool drops that card.
+  `p2`); `any` draws from the configurable card pool (below); `link` draws from cards **related**
+  (`CARD_Link`) to the `deck_owner` deck's cards, kept only if also in the pool. Duplicate picks on a
+  side are avoided; an empty pool drops that card.
 
 **`source: "any"` pool** — `DataLE/Roguelike/CardPool.json` defines the pool `any` draws from (and
 that card rewards will reuse):
@@ -183,13 +184,21 @@ that card rewards will reuse):
   "regulation": "Goat Format",
   "include": [12345],
   "exclude": [67890],
-  "byAscension": [ {}, { "include": [99999] } ]
+  "rarityRates": { "N": 8, "R": 4, "SR": 2, "UR": 1 },
+  "rateGroups": [ { "cids": [5381, 5655], "rate": 5 }, { "cids": [9999], "rate": 0 } ],
+  "byAscension": [ {}, { "include": [99999], "rarityRates": { "UR": 3 } } ]
 }
 ```
 
-Base = `CardList.json` minus the configured (or server-default) regulation's banlist; then global
-`include`/`exclude`, then `byAscension[asc]` (exact ascension index). Missing file = the default
-regulation's pool. Cached — restart the server to apply.
+- **Membership** — base = `CardList.json` minus the configured (or server-default) regulation's
+  banlist; then global `include`/`exclude`, then `byAscension[asc]` (exact ascension index).
+- **Weighting** — `any` / `link` picks are weighted (not uniform). A card's weight =
+  `rarityRates[rarity]` × the product of `rateGroups` rates it belongs to (default 1). `rarityRates`
+  keys are `N` / `R` / `SR` / `UR` (or `1`–`4`, from `CardList.json`); a group `rate` of `0` makes
+  its cards never appear. `byAscension[asc].rarityRates` override the global per rarity; its
+  `rateGroups` stack with the global ones.
+- `source: "deck"` picks stay uniform. Missing file = the default regulation's pool, uniform.
+  Cached — restart the server to apply.
 
 ---
 

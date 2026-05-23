@@ -143,6 +143,7 @@
     <Compile Include="Roguelike\RoguelikeEncounters.cs" />
     <Compile Include="Roguelike\RoguelikeModifiers.cs" />
     <Compile Include="Roguelike\RoguelikeCardPool.cs" />
+    <Compile Include="Roguelike\RoguelikeCardLinks.cs" />
     <Compile Include="Roguelike\RoguelikeMap.cs" />
     <Compile Include="Roguelike\RoguelikeMapLayout.cs" />
     <Compile Include="Roguelike\RoguelikeTypePolicy.cs" />

@@ -110,7 +110,27 @@ namespace YgoMaster
                 foreach (int cid in pool)
                     if (!used.Contains(cid) && RoguelikeCardPool.Matches(DataDir, cid, spec)) cands.Add(cid);
                 if (cands.Count == 0) return null;
-                int pick = cands[Rng.Next(cands.Count)];
+                // any/link draw weighted by RoguelikeCardPool (rarity + rate groups); deck = uniform.
+                string source = Utils.GetValue<string>(spec, "source");
+                int pick;
+                if (source == "any" || source == "link")
+                {
+                    double[] w = new double[cands.Count];
+                    double total = 0;
+                    for (int i = 0; i < cands.Count; i++)
+                    {
+                        w[i] = Math.Max(0, RoguelikeCardPool.Weight(DataDir, cands[i], Ascension));
+                        total += w[i];
+                    }
+                    if (total <= 0) return null;
+                    double roll = Rng.NextDouble() * total;
+                    pick = cands[cands.Count - 1];
+                    for (int i = 0; i < cands.Count; i++) { roll -= w[i]; if (roll <= 0) { pick = cands[i]; break; } }
+                }
+                else
+                {
+                    pick = cands[Rng.Next(cands.Count)];
+                }
                 used.Add(pick);
                 return pick;
             }
@@ -120,22 +140,39 @@ namespace YgoMaster
                 string source = Utils.GetValue<string>(spec, "source");
                 if (source == "any")
                     return RoguelikeCardPool.AnyPool(DataDir, Regulation, Ascension);
+
+                DeckInfo deck = DeckAt(OwnerIdx(Utils.GetValue<string>(spec, "deck_owner"), playerIdx));
+
+                if (source == "link")
+                {
+                    // Cards related (CARD_Link) to the deck's cards, kept only if still in the pool.
+                    if (deck == null) return null;
+                    HashSet<int> related = RoguelikeCardLinks.RelatedOf(DataDir, deck.GetAllCards(true, true, false));
+                    related.IntersectWith(RoguelikeCardPool.AnyPool(DataDir, Regulation, Ascension));
+                    return related;
+                }
                 if (!string.IsNullOrEmpty(source) && source != "deck")
                 {
-                    Console.WriteLine("[Roguelike] modifier random source='" + source + "' unknown — use 'deck' or 'any'");
+                    Console.WriteLine("[Roguelike] modifier random source='" + source + "' unknown — use deck/any/link");
                     return null;
                 }
-                string owner = Utils.GetValue<string>(spec, "deck_owner");
-                int idx;
+                return deck != null ? new HashSet<int>(deck.GetAllCards(true, true, false)) : null;
+            }
+
+            DeckInfo DeckAt(int idx)
+            {
+                return (Decks != null && idx >= 0 && idx < Decks.Length) ? Decks[idx] : null;
+            }
+
+            static int OwnerIdx(string owner, int playerIdx)
+            {
                 switch (owner)
                 {
-                    case "p1": idx = 0; break;
-                    case "p2": idx = 1; break;
-                    case "rival": idx = 1 - playerIdx; break;
-                    default: idx = playerIdx; break; // "own" + fallback
+                    case "p1": return 0;
+                    case "p2": return 1;
+                    case "rival": return 1 - playerIdx;
+                    default: return playerIdx; // "own" + fallback
                 }
-                if (Decks == null || idx < 0 || idx >= Decks.Length || Decks[idx] == null) return null;
-                return new HashSet<int>(Decks[idx].GetAllCards(true, true, false));
             }
         }
 

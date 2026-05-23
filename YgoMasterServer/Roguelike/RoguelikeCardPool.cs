@@ -186,16 +186,114 @@ namespace YgoMaster
 
         static HashSet<int> LoadCardListCids(string dataDirectory)
         {
-            HashSet<int> cids = new HashSet<int>();
+            return new HashSet<int>(CardListRarity(dataDirectory).Keys);
+        }
+
+        // ----- rate weighting (rarity + groups; CardPool.json) -----
+        // CardList.json is { cid: rarity } with rarity 1=N 2=R 3=SR 4=UR.
+        static Dictionary<int, int> _rarityByCid;
+        static bool _rarityLoaded;
+
+        static Dictionary<int, int> CardListRarity(string dataDirectory)
+        {
+            if (_rarityLoaded) return _rarityByCid;
+            _rarityLoaded = true;
+            _rarityByCid = new Dictionary<int, int>();
             string path = Path.Combine(dataDirectory, "CardList.json");
-            if (!File.Exists(path)) { Console.WriteLine("[Roguelike] CardList.json not found — 'any' pool empty"); return cids; }
+            if (!File.Exists(path)) { Console.WriteLine("[Roguelike] CardList.json not found — 'any' pool empty"); return _rarityByCid; }
             try
             {
                 Dictionary<string, object> doc = MiniJSON.Json.DeserializeStripped(File.ReadAllText(path)) as Dictionary<string, object>;
-                if (doc != null) foreach (string k in doc.Keys) { int c; if (int.TryParse(k, out c)) cids.Add(c); }
+                if (doc != null)
+                    foreach (KeyValuePair<string, object> kv in doc)
+                    {
+                        int c; if (!int.TryParse(kv.Key, out c)) continue;
+                        int r; try { r = Convert.ToInt32(kv.Value); } catch { r = 0; }
+                        _rarityByCid[c] = r;
+                    }
             }
             catch (Exception ex) { Console.WriteLine("[Roguelike] CardList.json parse EX: " + ex.Message); }
-            return cids;
+            return _rarityByCid;
+        }
+
+        class WeightCtx { public Dictionary<int, double> RarityRate; public Dictionary<int, double> GroupMult; }
+        static readonly Dictionary<int, WeightCtx> _weightByAsc = new Dictionary<int, WeightCtx>();
+
+        static WeightCtx Weights(string dataDirectory, int ascension)
+        {
+            WeightCtx cached;
+            if (_weightByAsc.TryGetValue(ascension, out cached)) return cached;
+
+            WeightCtx ctx = new WeightCtx { RarityRate = new Dictionary<int, double>(), GroupMult = new Dictionary<int, double>() };
+            Dictionary<string, object> cfg = PoolConfig(dataDirectory);
+            if (cfg != null)
+            {
+                ParseRarityRates(ctx.RarityRate, Utils.GetValue<Dictionary<string, object>>(cfg, "rarityRates"));
+                ParseGroups(ctx.GroupMult, Utils.GetValue<List<object>>(cfg, "rateGroups"));
+                Dictionary<string, object> asc = ItemAt(Utils.GetValue<List<object>>(cfg, "byAscension"), ascension);
+                if (asc != null)
+                {
+                    ParseRarityRates(ctx.RarityRate, Utils.GetValue<Dictionary<string, object>>(asc, "rarityRates")); // override per rarity
+                    ParseGroups(ctx.GroupMult, Utils.GetValue<List<object>>(asc, "rateGroups"));                       // stack with global
+                }
+            }
+            _weightByAsc[ascension] = ctx;
+            return ctx;
+        }
+
+        // Selection weight of cid at an ascension: rarityRate(rarity) × ∏(group rates). Default 1.
+        public static double Weight(string dataDirectory, int cid, int ascension)
+        {
+            WeightCtx ctx = Weights(dataDirectory, ascension);
+            double w = 1.0;
+            int rarity;
+            if (CardListRarity(dataDirectory).TryGetValue(cid, out rarity))
+            {
+                double rr; if (ctx.RarityRate.TryGetValue(rarity, out rr)) w *= rr;
+            }
+            double gm; if (ctx.GroupMult.TryGetValue(cid, out gm)) w *= gm;
+            return w;
+        }
+
+        static void ParseRarityRates(Dictionary<int, double> into, Dictionary<string, object> rates)
+        {
+            if (rates == null) return;
+            foreach (KeyValuePair<string, object> kv in rates)
+            {
+                int r = RarityKey(kv.Key);
+                if (r <= 0) continue;
+                double w; try { w = Convert.ToDouble(kv.Value); } catch { continue; }
+                into[r] = w;
+            }
+        }
+
+        static int RarityKey(string k)
+        {
+            switch ((k ?? "").ToUpperInvariant())
+            {
+                case "N": return 1; case "R": return 2; case "SR": return 3; case "UR": return 4;
+            }
+            int n; return int.TryParse(k, out n) ? n : 0;
+        }
+
+        static void ParseGroups(Dictionary<int, double> into, List<object> groups)
+        {
+            if (groups == null) return;
+            foreach (object o in groups)
+            {
+                Dictionary<string, object> g = o as Dictionary<string, object>;
+                if (g == null) continue;
+                object rv; if (!g.TryGetValue("rate", out rv)) continue;
+                double rate; try { rate = Convert.ToDouble(rv); } catch { continue; }
+                List<object> cids = Utils.GetValue<List<object>>(g, "cids");
+                if (cids == null) continue;
+                foreach (object o2 in cids)
+                {
+                    int c; if (!TryCid(o2, out c)) continue;
+                    double cur;
+                    into[c] = (into.TryGetValue(c, out cur) ? cur : 1.0) * rate;
+                }
+            }
         }
 
         static Dictionary<string, object> ItemAt(List<object> list, int i)
