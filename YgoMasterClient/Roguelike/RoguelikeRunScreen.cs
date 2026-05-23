@@ -119,6 +119,26 @@ namespace YgoMasterClient
             if (_mapMode) RoguelikeMapScreen.Refresh();
         }
 
+        // After a duel: defer the map refresh until it's visible again (it's hidden under the duel).
+        public static void MarkMapDirty()
+        {
+            if (_mapMode) RoguelikeMapScreen.MarkDirty();
+        }
+
+        // Launch the duel the server queued for a combat node. The settings already live in
+        // $.Duel (from the move response), so this mirrors the vanilla non-live Solo.start
+        // launch: hide the loading wheel and push the production VC over the map.
+        public static bool LaunchPendingDuel()
+        {
+            IntPtr manager = YgomGame.Menu.ContentViewControllerManager.GetManager();
+            if (manager == IntPtr.Zero) { Console.WriteLine("[Roguelike] LaunchPendingDuel: no manager"); return false; }
+            if (!RoguelikeDuel.Arm()) return false;   // capture settings before the production mutates $.Duel
+            Console.WriteLine("[Roguelike] launching Solo/SoloStartProduction");
+            YgomGame.Menu.ProfileViewController.HideLoading();
+            YgomSystem.UI.ViewControllerManager.PushChildViewController(manager, "Solo/SoloStartProduction");
+            return true;
+        }
+
         static void OnCreatedView(IntPtr thisPtr)
         {
             // Mark this instance BEFORE Original: the deck list (and UpdateTemplateList) is
@@ -133,6 +153,12 @@ namespace YgoMasterClient
                 if (_mapMode)
                 {
                     RoguelikeMapScreen.Build(go);
+                    // Unfinished combat? Re-launch it (same seed) instead of letting the player roam.
+                    if (RoguelikeApi.PendingDuelNode() >= 0)
+                    {
+                        Console.WriteLine("[Roguelike] pending duel on map open -> resume");
+                        RoguelikeApi.ResumeDuel();
+                    }
                 }
                 else
                 {

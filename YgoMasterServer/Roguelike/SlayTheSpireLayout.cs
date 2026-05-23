@@ -14,7 +14,7 @@ namespace YgoMaster
             int floors = Math.Max(2, RoguelikeSettings.Floors(settings));
             int width = Math.Max(2, RoguelikeSettings.Width(settings));
             int pathCount = Math.Max(2, RoguelikeSettings.Paths(settings));
-            List<KeyValuePair<string, double>> weights = NormalizeWeights(RoguelikeSettings.TypeWeights(settings));
+            RoguelikeTypePolicy policy = RoguelikeTypePolicy.FromSettings(settings, floors);
             Random rng = new Random(seed);
 
             RoguelikeMap map = new RoguelikeMap { Rows = floors };
@@ -28,12 +28,12 @@ namespace YgoMaster
             for (int p = 0; p < pathCount; p++)
             {
                 int col = rng.Next(width);
-                EnsureNode(grid, ref nextId, 0, col, weights, rng);
+                EnsureNode(grid, ref nextId, 0, col, policy, rng);
                 for (int r = 0; r < bodyTop; r++)
                 {
                     int nc = NextCol(grid, r, col, width, rng);
                     MapNode from = grid[r, col];
-                    MapNode to = EnsureNode(grid, ref nextId, r + 1, nc, weights, rng);
+                    MapNode to = EnsureNode(grid, ref nextId, r + 1, nc, policy, rng);
                     if (!from.Next.Contains(to.Id)) from.Next.Add(to.Id);
                     col = nc;
                 }
@@ -52,11 +52,10 @@ namespace YgoMaster
         }
 
         static MapNode EnsureNode(MapNode[,] grid, ref int nextId, int r, int c,
-            List<KeyValuePair<string, double>> weights, Random rng)
+            RoguelikeTypePolicy policy, Random rng)
         {
             if (grid[r, c] != null) return grid[r, c];
-            MapNode n = new MapNode { Id = nextId++, Row = r, Col = c };
-            n.Type = r == 0 ? "duel" : PickType(weights, rng);
+            MapNode n = new MapNode { Id = nextId++, Row = r, Col = c, Type = policy.PickType(r, rng) };
             grid[r, c] = n;
             return n;
         }
@@ -84,27 +83,6 @@ namespace YgoMaster
             MapNode opposite = grid[r + 1, col];
             if (neighbor == null || opposite == null) return false;
             return neighbor.Next.Contains(opposite.Id);
-        }
-
-        static List<KeyValuePair<string, double>> NormalizeWeights(Dictionary<string, object> w)
-        {
-            List<KeyValuePair<string, double>> list = new List<KeyValuePair<string, double>>();
-            double total = 0;
-            foreach (KeyValuePair<string, object> kv in w)
-            {
-                double v; try { v = Convert.ToDouble(kv.Value); } catch { v = 0; }
-                if (v > 0) { list.Add(new KeyValuePair<string, double>(kv.Key, v)); total += v; }
-            }
-            if (total <= 0) list.Add(new KeyValuePair<string, double>("duel", 1.0));
-            return list;
-        }
-
-        static string PickType(List<KeyValuePair<string, double>> weights, Random rng)
-        {
-            double total = 0; foreach (KeyValuePair<string, double> kv in weights) total += kv.Value;
-            double roll = rng.NextDouble() * total;
-            foreach (KeyValuePair<string, double> kv in weights) { roll -= kv.Value; if (roll <= 0) return kv.Key; }
-            return weights[0].Key;
         }
     }
 }

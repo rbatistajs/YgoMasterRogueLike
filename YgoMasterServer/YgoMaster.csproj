@@ -138,9 +138,11 @@
     <Compile Include="WikiDump\YgoWikiDecks.cs" />
     <Compile Include="Roguelike\RoguelikeRun.cs" />
     <Compile Include="Roguelike\RoguelikeDeckPool.cs" />
+    <Compile Include="Roguelike\RoguelikeDeckBuilder.cs" />
     <Compile Include="Roguelike\RoguelikeSettings.cs" />
     <Compile Include="Roguelike\RoguelikeMap.cs" />
     <Compile Include="Roguelike\RoguelikeMapLayout.cs" />
+    <Compile Include="Roguelike\RoguelikeTypePolicy.cs" />
     <Compile Include="Roguelike\SlayTheSpireLayout.cs" />
     <Compile Include="Roguelike\GameServer.Roguelike.cs" />
   </ItemGroup>

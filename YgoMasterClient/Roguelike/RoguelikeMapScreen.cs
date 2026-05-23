@@ -18,6 +18,7 @@ namespace YgoMasterClient
         const string ScrollView = DeckGroup + ".Scroll View2";
         const string DeckContent = ScrollView + ".Viewport.Content";
         const string HeaderArea = Ui + ".TitleSafeArea.HeaderButtonArea"; // deck count / filter / etc.
+        const string HeaderName = Ui + ".TitleSafeArea.HeaderButtonArea.HeaderButtonGroup.NameText"; // cloned for HP
         const string RgScrollViewPath = DeckGroup + ".RgScrollView";
         const string RgMapPath = RgScrollViewPath + ".RgViewport.RgMap";
 
@@ -48,6 +49,10 @@ namespace YgoMasterClient
         static IntPtr _tweenPositionType;
         static IL2Field _tpRtrans, _tpFrom, _tpTo;
         static IntPtr _go;       // the current map VC GameObject (for in-place refresh)
+        static IL2Method _activeInHierarchy; // GameObject.activeInHierarchy getter (refresh gate)
+        static bool _refreshPending;         // refresh once the map is on-screen again (post-duel)
+        static IntPtr _tmpType;  // ExtendedTextMeshProUGUI (HP label text)
+        static IntPtr _hpLabel;  // cloned NameText showing "HP cur/max", updated each render
         static IntPtr _extScroll; // our RgScrollView's ExtendedScrollRect (identity for the Start hook)
         static IntPtr _markerSource; // cached PlayerIcon clone (Home is inactive once a run is open)
         static bool _ready;
@@ -127,6 +132,8 @@ namespace YgoMasterClient
                 _rectMask2DType = ui.GetClass("RectMask2D", "UnityEngine.UI").IL2Typeof();
                 _imageType = ui.GetClass("Image", "UnityEngine.UI").IL2Typeof();
                 _graphicColor = ui.GetClass("Graphic", "UnityEngine.UI").GetProperty("color");
+                _activeInHierarchy = core.GetClass("GameObject", "UnityEngine").GetProperty("activeInHierarchy").GetGetMethod();
+                _tmpType = CastUtils.IL2Typeof("ExtendedTextMeshProUGUI", "YgomSystem.YGomTMPro", "Assembly-CSharp");
                 _ready = true;
             }
             catch (Exception ex) { Console.WriteLine("[Roguelike] mapscreen init EX: " + ex); }
@@ -170,10 +177,28 @@ namespace YgoMasterClient
             _scrollPending = true;
         }
 
+        // Request a re-render the next time the map is actually on screen. Used after a duel: the
+        // duel_result completes while the map VC is deactivated (the duel covers it), so an
+        // immediate Refresh would rebuild stale/invisible nodes. Defer until it re-appears.
+        public static void MarkDirty() { _refreshPending = true; }
+
+        static bool IsActive(IntPtr go)
+        {
+            if (go == IntPtr.Zero || _activeInHierarchy == null) return false;
+            IL2Object r = _activeInHierarchy.Invoke(go);
+            return r != null && r.GetValueRef<csbool>();
+        }
+
         // Driven per-frame from TradeUtils (NetworkMain.Update). Fires the deferred open-scroll once
         // the delay elapses (acts like a coroutine WaitForSeconds).
         public static void Update()
         {
+            // Pending post-duel refresh: apply only once the map is visible again (fresh ClientWork).
+            if (_refreshPending && IsActive(_go))
+            {
+                _refreshPending = false;
+                Refresh();
+            }
             if (!_scrollPending || DateTime.UtcNow < _scrollDueAt) return;
             _scrollPending = false;
             // Recompute the target now: the viewport height was 0 at build time (layout not settled).
@@ -314,7 +339,37 @@ namespace YgoMasterClient
             if (_extDragScrollEnabled != null) { csbool drag = true; _extDragScrollEnabled.SetValue(srComp, new IntPtr(&drag)); }
             else Console.WriteLine("[Roguelike] map: ExtendedScrollRect.dragScrollEnabled field not found");
 
+            SetupHpLabel(go, deckGroup);
             RenderMap(template, ct, srComp, deckGroup);
+        }
+
+        // HP indicator: the run header is hidden on the map, so clone its NameText (a styled TMP)
+        // into the DeckGroup, pinned top-left. RenderMap fills the text each render.
+        static void SetupHpLabel(IntPtr go, IntPtr deckGroup)
+        {
+            IntPtr existing = GameObject.FindGameObjectByName(deckGroup, "RgHpLabel");
+            if (existing != IntPtr.Zero) UnityObject.Destroy(existing); // avoid dupes on SetupMap re-run
+            IntPtr nameText = GameObject.FindGameObjectByPath(go, HeaderName);
+            if (nameText == IntPtr.Zero) { _hpLabel = IntPtr.Zero; Console.WriteLine("[Roguelike] map: NameText not found for HP label"); return; }
+            IntPtr label = UnityObject.Instantiate(nameText);
+            UnityObject.SetName(label, "RgHpLabel");
+            IntPtr lt = GameObject.GetTransform(label);
+            Transform.SetParent(lt, GameObject.GetTransform(deckGroup));
+            SetVec(lt, _anchorMin, new AssetHelper.Vector2(0, 1));
+            SetVec(lt, _anchorMax, new AssetHelper.Vector2(0, 1));
+            SetVec(lt, _pivot, new AssetHelper.Vector2(0, 1));
+            Vector3 pos = new Vector3(28, -12, 0);
+            _anchoredPos3D.GetSetMethod().Invoke(lt, new IntPtr[] { new IntPtr(&pos) });
+            Transform.SetLocalScale(lt, new Vector3(1, 1, 1));
+            GameObject.SetActive(label, true);
+            _hpLabel = label;
+        }
+
+        static void SetHpText()
+        {
+            if (_hpLabel == IntPtr.Zero || _tmpType == IntPtr.Zero) return;
+            IntPtr tmp = GameObject.GetComponent(_hpLabel, _tmpType);
+            if (tmp != IntPtr.Zero) TMPro.TMP_Text.SetText(tmp, "HP " + RoguelikeApi.Hp() + " / " + RoguelikeApi.MaxHp());
         }
 
         // (Re)build the nodes/edges/marker inside RgMap from the current run state and scroll to the
@@ -373,6 +428,7 @@ namespace YgoMasterClient
             _hasScrollTarget = vh > 0;
             ApplyScroll(srComp); // re-applied from the Start hook on first build (post Initialize)
 
+            SetHpText();
         }
 
         // Looping ping-pong scale on the choosable (reachable) nodes so the next moves stand out.

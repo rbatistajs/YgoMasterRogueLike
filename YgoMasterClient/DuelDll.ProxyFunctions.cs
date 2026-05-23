@@ -1495,6 +1495,12 @@ namespace YgoMasterClient
             }
         }
 
+        // Remaining LP of a player (engine-side). Used by the roguelike to carry HP across duels.
+        public static int GetLP(int player)
+        {
+            return hookDLL_DuelGetLP.Original(player);
+        }
+
         static int DLL_DuelResultGetData(int player, IntPtr dst)
         {
             if (IsPvpDuel)

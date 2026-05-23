@@ -132,6 +132,17 @@ namespace YgomGame.Solo
 
         static void SelectTurn(IntPtr thisPtr)
         {
+            if (YgoMasterClient.RoguelikeDuel.Active)
+            {
+                // No turn-select for roguelike duels: jump straight to Final so the production
+                // sends Duel.begin (where we inject the custom-duel settings).
+                DuelStarterFirstPlayer = YgoMasterClient.RoguelikeDuel.FirstPlayer;
+                if (DuelStarterFirstPlayer < 0) DuelStarterFirstPlayer = Utils.Rand.Next(2);
+                Console.WriteLine("[Roguelike] SelectTurn -> Final (FirstPlayer=" + DuelStarterFirstPlayer + ")");
+                int rgStep = finalStepValue;
+                fieldStep.SetValue(thisPtr, new IntPtr(&rgStep));
+                return;
+            }
             if (YgomGame.Room.RoomCreateViewController.IsHacked)
             {
                 DuelSettings settings = YgomGame.Room.RoomCreateViewController.Settings;
@@ -208,6 +219,16 @@ namespace YgomSystem.Network
 
         static IntPtr Duel_begin(IntPtr rulePtr)
         {
+            if (YgoMasterClient.RoguelikeDuel.Active)
+            {
+                Dictionary<string, object> rule = MiniJSON.Json.Deserialize(YgomMiniJSON.Json.Serialize(rulePtr)) as Dictionary<string, object>;
+                if (rule == null) rule = new Dictionary<string, object>();
+                Console.WriteLine("[Roguelike] Duel.begin rule (pre-inject): " + MiniJSON.Json.Serialize(rule));
+                YgoMasterClient.RoguelikeDuel.Inject(rule);
+                rulePtr = YgomMiniJSON.Json.Deserialize(MiniJSON.Json.Serialize(rule));
+                YgoMasterClient.RoguelikeDuel.Disarm();
+                return hookDuel_begin.Original(rulePtr);
+            }
             if (YgomGame.Room.RoomCreateViewController.IsHacked)
             {
                 Dictionary<string, object> rule = MiniJSON.Json.Deserialize(YgomMiniJSON.Json.Serialize(rulePtr)) as Dictionary<string, object>;
@@ -259,6 +280,10 @@ namespace YgomSystem.Network
                 param["res"] = (int)DuelResultType.Win;
                 param["finish"] = (int)DuelFinishType.Normal;
             }
+
+            int rgPlayerLp = 0;
+            try { rgPlayerLp = DuelDll.GetLP(DuelDll.DLL_DuelMyself()); } catch { }
+            YgoMasterClient.RoguelikeFlow.OnDuelEnded(Utils.GetValue<int>(param, "res") == (int)DuelResultType.Win, rgPlayerLp);
 
             if (!Program.IsLive)
             {
@@ -1935,6 +1960,7 @@ namespace YgomSystem.UI
         static IL2Method methodLoadViewControllerPrefab;
         static IL2Method methodGetViewControllerT;
         static Dictionary<IntPtr, IL2Method> methodGetViewControllerTInstances = new Dictionary<IntPtr, IL2Method>();
+        public static bool LogPrefabPaths;   // dev: log each VC prefab path as it loads (toggle via `vclog`)
 
         delegate void Del_PushChildViewController(IntPtr thisPtr, IntPtr prefabpathPtr);
         static Hook<Del_PushChildViewController> hookPushChildViewController;
@@ -1964,11 +1990,8 @@ namespace YgomSystem.UI
 
         public static IntPtr LoadViewControllerPrefab(IntPtr thisPtr, IntPtr prefabpathPtr)
         {
-            /*if (prefabpathPtr != IntPtr.Zero)
-            {
-                string prefabpath = new IL2String(prefabpathPtr).ToString();
-                Console.WriteLine("vc: " + prefabpath);
-            }*/
+            if (LogPrefabPaths && prefabpathPtr != IntPtr.Zero)
+                Console.WriteLine("[vc] " + new IL2String(prefabpathPtr).ToString());
             return hookLoadViewControllerPrefab.Original.Invoke(thisPtr, prefabpathPtr);
         }
 

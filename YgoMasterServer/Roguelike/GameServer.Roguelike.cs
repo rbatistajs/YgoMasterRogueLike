@@ -139,6 +139,8 @@ namespace YgoMaster
                             run.Map = layout.Build((int)run.Seed, settings).ToDictionary();
                             run.Position = -1;
                             run.Visited = new List<object>();
+                            run.MaxHp = RoguelikeSettings.PlayerMaxHp(settings);
+                            run.Hp = run.MaxHp; // start the run at full HP
                             run.Save(GetPlayerDirectory(request.Player));
                         }
                     }
@@ -158,10 +160,129 @@ namespace YgoMaster
                     run.Position = target;
                     if (run.Visited == null) run.Visited = new List<object>();
                     if (!run.Visited.Contains(target)) run.Visited.Add(target);
+                    // Combat node -> set up the duel; the client launches it and reports the result.
+                    if (IsCombat(NodeType(run, target)) && BuildRoguelikeDuel(run, request, target))
+                        run.PendingDuelNode = target;
+                    else
+                        run.PendingDuelNode = -1;
                     run.Save(GetPlayerDirectory(request.Player));
                 }
             }
             WriteRun(request, run);
+        }
+
+        // Resume an unfinished combat: rebuild the same (deterministic) duel for the pending node so
+        // the client can re-launch it. No state change — the duel only clears via duel_result.
+        void Act_RoguelikeResumeDuel(GameServerWebRequest request)
+        {
+            RoguelikeRun run = RoguelikeRun.Load(GetPlayerDirectory(request.Player));
+            if (run.Active && run.PendingDuelNode >= 0)
+                BuildRoguelikeDuel(run, request, run.PendingDuelNode);
+            WriteRun(request, run);
+        }
+
+        // Win: carry the player's remaining LP into run HP (+ heal, clamped to max), credit currency.
+        // Loss: HP hits 0, run ends. Clears the pending duel either way.
+        void Act_RoguelikeDuelResult(GameServerWebRequest request)
+        {
+            RoguelikeRun run = RoguelikeRun.Load(GetPlayerDirectory(request.Player));
+            bool win = request.ActParams != null && Utils.GetValue<bool>(request.ActParams, "win", false);
+            int playerLp = request.ActParams != null ? Utils.GetValue<int>(request.ActParams, "playerLp", 0) : 0;
+            if (run.Active && run.PendingDuelNode >= 0)
+            {
+                Dictionary<string, object> settings = RoguelikeSettings.Load(dataDirectory);
+                if (run.MaxHp <= 0) run.MaxHp = RoguelikeSettings.PlayerMaxHp(settings); // lazy init (old saves)
+                if (win)
+                {
+                    int heal = (int)(run.MaxHp * RoguelikeSettings.HealPercent(settings));
+                    run.Hp = Math.Min(run.MaxHp, Math.Max(0, playerLp) + heal);
+                    run.Currency += RewardFor(NodeType(run, run.PendingDuelNode));
+                    if (run.Hp <= 0) run.Active = false; // safety: a 0-HP "win" is still death
+                }
+                else
+                {
+                    run.Hp = 0;
+                    run.Active = false;
+                }
+                run.PendingDuelNode = -1;
+                run.Save(GetPlayerDirectory(request.Player));
+            }
+            WriteRun(request, run);
+        }
+
+        static bool IsCombat(string type) => type == "duel" || type == "elite" || type == "boss";
+
+        static int RewardFor(string type)
+        {
+            switch (type) { case "boss": return 1000; case "elite": return 250; default: return 100; }
+        }
+
+        static string NodeType(RoguelikeRun run, int id)
+        {
+            List<object> nodes = run.Map != null ? Utils.GetValue<List<object>>(run.Map, "nodes") : null;
+            if (nodes == null) return "";
+            foreach (object o in nodes)
+            {
+                Dictionary<string, object> n = o as Dictionary<string, object>;
+                if (n != null && Utils.GetValue<int>(n, "id", -999) == id)
+                    return Utils.GetValue<string>(n, "type", "");
+            }
+            return "";
+        }
+
+        // Build a custom duel (run deck vs opponent) for a combat node and put it in Response["Duel"]
+        // so the client's Solo-start flow launches it. Everything random — opponent pick, who goes
+        // first, the engine RNG seed — derives from (run seed, node) so an unfinished duel resumes
+        // identically: the player can't quit to re-roll their draws. Mirrors the CustomDuel pattern.
+        bool BuildRoguelikeDuel(RoguelikeRun run, GameServerWebRequest request, int nodeId)
+        {
+            Dictionary<string, object> deckDict = run.Deck != null ? Utils.GetValue<Dictionary<string, object>>(run.Deck, "deck") : null;
+            if (deckDict == null) return false;
+            DeckInfo player = new DeckInfo();
+            player.FromDictionary(deckDict, false);
+            player.Name = Utils.GetValue<string>(run.Deck, "name", "Run Deck");
+
+            List<string> opps = RoguelikeDeckPool.ListOpponentFiles(dataDirectory);
+            if (opps.Count == 0) { Console.WriteLine("[Roguelike] no opponents in Roguelike/Opponents"); return false; }
+            opps.Sort(StringComparer.Ordinal); // stable order so the seeded pick is reproducible
+
+            Random duelRng = new Random(DuelRngSeed(run.Seed, nodeId));
+            string oppFile = opps[duelRng.Next(opps.Count)];
+            DeckInfo opp = new DeckInfo();
+            opp.File = oppFile;
+            opp.Load();
+            if (string.IsNullOrEmpty(opp.Name)) opp.Name = System.IO.Path.GetFileNameWithoutExtension(oppFile);
+
+            DuelSettings ds = new DuelSettings();
+            ds.Deck[DuelSettings.PlayerIndex] = player;
+            ds.Deck[DuelSettings.CpuIndex] = opp;
+            ds.IsCustomDuel = true;
+            ds.SetRequiredDefaults();
+            // Starting LP: player = current run HP, enemy = per-type config (set after defaults so
+            // they aren't zeroed; non-zero so they survive serialization and the engine's defaulting).
+            Dictionary<string, object> hpSettings = RoguelikeSettings.Load(dataDirectory);
+            if (run.MaxHp <= 0) run.MaxHp = RoguelikeSettings.PlayerMaxHp(hpSettings); // lazy init (old saves)
+            int playerLife = run.Hp > 0 ? run.Hp : run.MaxHp;
+            ds.life[DuelSettings.PlayerIndex] = playerLife;
+            ds.life[DuelSettings.CpuIndex] = RoguelikeSettings.EnemyHpFor(hpSettings, NodeType(run, nodeId));
+            ds.chapter = 0;
+            ds.FirstPlayer = duelRng.Next(2);
+            // Engine RNG seed (shuffle/draws/dice). Must be nonzero so Act_DuelBegin keeps it
+            // instead of randomizing; deterministic so a resumed duel deals the same cards.
+            ds.RandSeed = (uint)duelRng.Next(1, int.MaxValue);
+            // $.Duel drives the production visuals (cosmetics only). The full settings ride along
+            // as duelStarterData so the client can forward them in Duel.begin — there's no chapter
+            // for the server to build from, so the custom-duel path is the only way in.
+            Dictionary<string, object> duelDto = ds.ToDictionaryForSoloStart();
+            duelDto["duelStarterData"] = ds.ToDictionary();
+            request.Response["Duel"] = duelDto;
+            return true;
+        }
+
+        // Deterministic per-(run, node) seed for everything random about a combat duel.
+        static int DuelRngSeed(long runSeed, int nodeId)
+        {
+            unchecked { return (int)((uint)(runSeed * 2654435761L) ^ (uint)(nodeId * 40503 + 0x9E3779B9)); }
         }
 
         // Reachable = entry (-1) -> any node in row 0; otherwise the current node's `next`.

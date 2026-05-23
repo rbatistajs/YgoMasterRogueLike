@@ -25,6 +25,16 @@ namespace YgoMaster
             return new List<string>(Directory.GetFiles(dir, "*.json"));
         }
 
+        // Enemy decks under <dataDirectory>/Roguelike/Opponents (json or ydk). Full paths.
+        public static List<string> ListOpponentFiles(string dataDirectory)
+        {
+            string dir = Path.Combine(dataDirectory, "Roguelike", "Opponents");
+            if (!Directory.Exists(dir)) return new List<string>();
+            List<string> files = new List<string>(Directory.GetFiles(dir, "*.json"));
+            files.AddRange(Directory.GetFiles(dir, "*.ydk"));
+            return files;
+        }
+
         public static StarterDeck LoadOne(string fullPath)
         {
             Dictionary<string, object> doc = MiniJSON.Json.DeserializeStripped(

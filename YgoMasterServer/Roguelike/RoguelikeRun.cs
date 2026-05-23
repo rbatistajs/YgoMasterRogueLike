@@ -17,6 +17,10 @@ namespace YgoMaster
         public Dictionary<string, object> Map;     // RoguelikeMap.ToDictionary() or null
         public int Position = -1;                   // current node id (-1 = entry, before row 0)
         public List<object> Visited;               // ids already walked
+        public int Currency;                        // run currency, credited on duel win
+        public int PendingDuelNode = -1;            // combat node whose duel is in progress (-1 = none)
+        public int Hp;                              // current run HP (= player's starting LP each duel)
+        public int MaxHp;                           // HP cap (snapshot of playerMaxHp at run start)
 
         public Dictionary<string, object> ToDictionary()
         {
@@ -30,6 +34,10 @@ namespace YgoMaster
                 { "map", Map },
                 { "position", Position },
                 { "visited", Visited ?? new List<object>() },
+                { "currency", Currency },
+                { "pendingDuelNode", PendingDuelNode },
+                { "hp", Hp },
+                { "maxHp", MaxHp },
             };
         }
 
@@ -49,6 +57,10 @@ namespace YgoMaster
                 Map        = Utils.GetValue<Dictionary<string, object>>(d, "map"),
                 Position   = Utils.GetValue<int>(d, "position", -1),
                 Visited    = Utils.GetValue<List<object>>(d, "visited"),
+                Currency   = Utils.GetValue<int>(d, "currency", 0),
+                PendingDuelNode = Utils.GetValue<int>(d, "pendingDuelNode", -1),
+                Hp         = Utils.GetValue<int>(d, "hp", 0),
+                MaxHp      = Utils.GetValue<int>(d, "maxHp", 0),
             };
         }
 

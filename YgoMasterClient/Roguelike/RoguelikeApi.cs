@@ -218,5 +218,28 @@ namespace YgoMasterClient
         {
             Call("Roguelike.move", new Dictionary<string, object> { { "nodeId", nodeId } });
         }
+
+        // ----- combat (M4) -----
+
+        // Combat node whose duel the server queued in this move's response (-1 = none). When
+        // set, $.Duel holds the duel settings ready for Solo/SoloStartProduction.
+        public static int PendingDuelNode()
+        {
+            return YgomSystem.Utility.ClientWork.GetByJsonPath<int>("Roguelike.pendingDuelNode");
+        }
+
+        // Report a finished combat duel: win/loss + the player's remaining LP. Server carries the LP
+        // into run HP (win, + heal) or ends the run (loss).
+        public static void SendDuelResult(bool win, int playerLp)
+        {
+            Call("Roguelike.duel_result", new Dictionary<string, object> { { "win", win }, { "playerLp", playerLp } });
+        }
+
+        // Re-fetch the pending combat duel (same seed) so the client can relaunch an unfinished one.
+        public static void ResumeDuel() { Call("Roguelike.resume_duel"); }
+
+        // Current run HP / cap (for the map HP indicator).
+        public static int Hp() { return YgomSystem.Utility.ClientWork.GetByJsonPath<int>("Roguelike.hp"); }
+        public static int MaxHp() { return YgomSystem.Utility.ClientWork.GetByJsonPath<int>("Roguelike.maxHp"); }
     }
 }

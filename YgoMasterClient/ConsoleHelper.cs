@@ -803,6 +803,36 @@ namespace YgoMasterClient
                         }
                     }
                     break;
+                case "vclog":// Toggle logging of view controller prefab paths as screens load
+                    YgomSystem.UI.ViewControllerManager.LogPrefabPaths = !YgomSystem.UI.ViewControllerManager.LogPrefabPaths;
+                    Console.WriteLine("[vclog] prefab path logging = " + YgomSystem.UI.ViewControllerManager.LogPrefabPaths);
+                    break;
+                case "vcstack":// dev: list the view controller stack (index -> class) to console
+                    {
+                        IntPtr manager = YgomGame.Menu.ContentViewControllerManager.GetManager();
+                        if (manager == IntPtr.Zero) { Console.WriteLine("[vcstack] no manager"); break; }
+                        IL2Class vcm = Assembler.GetAssembly("Assembly-CSharp").GetClass("ViewControllerManager", "YgomSystem.UI");
+                        int count = 0;
+                        try { count = vcm.GetMethod("GetStackCount").Invoke(manager).GetValueRef<int>(); }
+                        catch (Exception e) { Console.WriteLine("[vcstack] count EX " + e.Message); }
+                        Console.WriteLine("[vcstack] count=" + count);
+                        IL2Method getAt = null;
+                        try { getAt = vcm.GetMethod("GetStackViewController", x => x.GetParameters().Length == 1 && x.GetParameters()[0].Type.Name.IndexOf("Int32") >= 0); }
+                        catch { }
+                        for (int i = 0; i < count && getAt != null; i++)
+                        {
+                            try
+                            {
+                                IL2Object vc = getAt.Invoke(manager, new IntPtr[] { new IntPtr(&i) });
+                                string nm = (vc != null && vc.ptr != IntPtr.Zero)
+                                    ? Marshal.PtrToStringAnsi(Import.Class.il2cpp_class_get_name(Import.Object.il2cpp_object_get_class(vc.ptr)))
+                                    : "null";
+                                Console.WriteLine("  [" + i + "] " + nm);
+                            }
+                            catch (Exception e) { Console.WriteLine("  [" + i + "] EX " + e.Message); }
+                        }
+                    }
+                    break;
                 case "vcdump":// Dump the current top view controller's hierarchy (compact: names + components) to _tmp. Optional depth arg (default 6).
                     {
                         int depth = 6;
