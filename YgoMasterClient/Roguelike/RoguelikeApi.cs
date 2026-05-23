@@ -42,8 +42,18 @@ namespace YgoMasterClient
             methodEntry.Invoke(new IntPtr[] { new IL2String(act).ptr, argsPtr, new IntPtr(&timeout) });
         }
 
-        public static void StartRun() { Call("Roguelike.start_run"); }
+        public static void StartRun(int ascension = 0)
+        {
+            Call("Roguelike.start_run", new Dictionary<string, object> { { "ascension", ascension } });
+        }
         public static void AbandonRun() { Call("Roguelike.abandon_run"); }
+
+        // ----- acts / ascension -----
+        public static int Act() { return YgomSystem.Utility.ClientWork.GetByJsonPath<int>("Roguelike.act"); }
+        public static int Acts() { return YgomSystem.Utility.ClientWork.GetByJsonPath<int>("Roguelike.acts"); }
+        public static int Ascension() { return YgomSystem.Utility.ClientWork.GetByJsonPath<int>("Roguelike.ascension"); }
+        public static int MaxAscension() { return YgomSystem.Utility.ClientWork.GetByJsonPath<int>("Roguelike.maxAscension"); }
+        public static bool Won() { return YgomSystem.Utility.ClientWork.GetByJsonPath<bool>("Roguelike.won"); }
         public static void ChooseDeck(int index)
         {
             Call("Roguelike.choose_deck", new Dictionary<string, object> { { "index", index } });

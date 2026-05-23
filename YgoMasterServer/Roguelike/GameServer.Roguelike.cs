@@ -17,6 +17,8 @@ namespace YgoMaster
         {
             Dictionary<string, object> dto = run.ToDictionary();
             dto["deckOffers"] = ExpandDeckOffers(run.DeckOffers);
+            dto["maxAscension"] = RoguelikeMeta.Load(GetPlayerDirectory(request.Player)).MaxAscension;
+            dto["acts"] = RoguelikeSettings.Acts(RoguelikeSettings.Load(dataDirectory));
             request.Response["Roguelike"] = dto;
             request.Remove("Roguelike");
         }
@@ -24,8 +26,15 @@ namespace YgoMaster
         void Act_RoguelikeStartRun(GameServerWebRequest request)
         {
             string gameType = "base_deck";
+            int ascension = 0;
             if (request.ActParams != null)
+            {
                 gameType = Utils.GetValue<string>(request.ActParams, "gameType", "base_deck");
+                ascension = Utils.GetValue<int>(request.ActParams, "ascension", 0);
+            }
+            int maxAsc = RoguelikeMeta.Load(GetPlayerDirectory(request.Player)).MaxAscension;
+            if (ascension < 0) ascension = 0;
+            if (ascension > maxAsc) ascension = maxAsc; // never trust the client
             int seed = new Random().Next();
             RoguelikeRun run = new RoguelikeRun
             {
@@ -36,6 +45,9 @@ namespace YgoMaster
                 DeckChosen = false,
                 DeckOffers = RollDeckOfferFiles(seed, 3),
                 Deck = null,
+                Act = 0,
+                Ascension = ascension,
+                Won = false,
             };
             run.Save(GetPlayerDirectory(request.Player));
             WriteRun(request, run);
@@ -134,12 +146,14 @@ namespace YgoMaster
                             };
                             run.DeckChosen = true;
                             run.DeckOffers = new List<object>();
-                            Dictionary<string, object> settings = RoguelikeSettings.Load(dataDirectory);
-                            RoguelikeMapLayout layout = RoguelikeMapLayout.Create(RoguelikeSettings.Layout(settings));
-                            run.Map = layout.Build((int)run.Seed, settings).ToDictionary();
+                            run.Act = 0;
+                            Dictionary<string, object> eff = RoguelikeSettings.Effective(
+                                RoguelikeSettings.Load(dataDirectory), run.Act, run.Ascension);
+                            RoguelikeMapLayout layout = RoguelikeMapLayout.Create(RoguelikeSettings.Layout(eff));
+                            run.Map = layout.Build(ActSeed(run.Seed, run.Act), eff).ToDictionary();
                             run.Position = -1;
                             run.Visited = new List<object>();
-                            run.MaxHp = RoguelikeSettings.PlayerMaxHp(settings);
+                            run.MaxHp = RoguelikeSettings.PlayerMaxHp(eff);
                             run.Hp = run.MaxHp; // start the run at full HP
                             run.Save(GetPlayerDirectory(request.Player));
                         }
@@ -181,33 +195,68 @@ namespace YgoMaster
             WriteRun(request, run);
         }
 
-        // Win: carry the player's remaining LP into run HP (+ heal, clamped to max), credit currency.
-        // Loss: HP hits 0, run ends. Clears the pending duel either way.
+        // Win: carry remaining LP into run HP (+ combat heal), credit currency. Boss win advances to
+        // the next act (regenerate map, inter-act heal) or, on the final act, wins the run and unlocks
+        // the next ascension. Loss: HP hits 0, run ends. Clears the pending duel either way.
         void Act_RoguelikeDuelResult(GameServerWebRequest request)
         {
-            RoguelikeRun run = RoguelikeRun.Load(GetPlayerDirectory(request.Player));
+            string dir = GetPlayerDirectory(request.Player);
+            RoguelikeRun run = RoguelikeRun.Load(dir);
             bool win = request.ActParams != null && Utils.GetValue<bool>(request.ActParams, "win", false);
             int playerLp = request.ActParams != null ? Utils.GetValue<int>(request.ActParams, "playerLp", 0) : 0;
             if (run.Active && run.PendingDuelNode >= 0)
             {
-                Dictionary<string, object> settings = RoguelikeSettings.Load(dataDirectory);
-                if (run.MaxHp <= 0) run.MaxHp = RoguelikeSettings.PlayerMaxHp(settings); // lazy init (old saves)
+                Dictionary<string, object> baseS = RoguelikeSettings.Load(dataDirectory);
+                Dictionary<string, object> eff = RoguelikeSettings.Effective(baseS, run.Act, run.Ascension);
+                if (run.MaxHp <= 0) run.MaxHp = RoguelikeSettings.PlayerMaxHp(eff); // lazy init (old saves)
+                string nodeType = NodeType(run, run.PendingDuelNode);
+                run.PendingDuelNode = -1;
                 if (win)
                 {
-                    int heal = (int)(run.MaxHp * RoguelikeSettings.HealPercent(settings));
+                    int heal = (int)(run.MaxHp * RoguelikeSettings.HealPercent(eff));
                     run.Hp = Math.Min(run.MaxHp, Math.Max(0, playerLp) + heal);
-                    run.Currency += RewardFor(NodeType(run, run.PendingDuelNode));
+                    run.Currency += RewardFor(nodeType);
                     if (run.Hp <= 0) run.Active = false; // safety: a 0-HP "win" is still death
+                    else if (nodeType == "boss") AdvanceActOrWin(run, baseS, dir);
                 }
                 else
                 {
                     run.Hp = 0;
                     run.Active = false;
                 }
-                run.PendingDuelNode = -1;
-                run.Save(GetPlayerDirectory(request.Player));
+                run.Save(dir);
             }
             WriteRun(request, run);
+        }
+
+        // Boss beaten: go to the next act (new map + inter-act heal) or win the run + unlock ascension.
+        void AdvanceActOrWin(RoguelikeRun run, Dictionary<string, object> baseS, string dir)
+        {
+            if (run.Act < RoguelikeSettings.Acts(baseS) - 1)
+            {
+                run.Act++;
+                Dictionary<string, object> next = RoguelikeSettings.Effective(baseS, run.Act, run.Ascension);
+                RoguelikeMapLayout layout = RoguelikeMapLayout.Create(RoguelikeSettings.Layout(next));
+                run.Map = layout.Build(ActSeed(run.Seed, run.Act), next).ToDictionary();
+                run.Position = -1;
+                run.Visited = new List<object>();
+                int interHeal = (int)(run.MaxHp * RoguelikeSettings.InterActHealPercent(next));
+                run.Hp = Math.Min(run.MaxHp, run.Hp + interHeal);
+            }
+            else
+            {
+                run.Won = true;
+                run.Active = false;
+                RoguelikeMeta meta = RoguelikeMeta.Load(dir);
+                int unlocked = Math.Min(RoguelikeSettings.Ascensions(baseS) - 1, Math.Max(meta.MaxAscension, run.Ascension + 1));
+                if (unlocked > meta.MaxAscension) { meta.MaxAscension = unlocked; meta.Save(dir); }
+            }
+        }
+
+        // Deterministic per-act map seed (each act of a run gets a distinct, reproducible map).
+        static int ActSeed(long runSeed, int act)
+        {
+            unchecked { return (int)((uint)(runSeed * 31) ^ (uint)(act * 2654435761)); }
         }
 
         static bool IsCombat(string type) => type == "duel" || type == "elite" || type == "boss";
@@ -246,7 +295,7 @@ namespace YgoMaster
             if (opps.Count == 0) { Console.WriteLine("[Roguelike] no opponents in Roguelike/Opponents"); return false; }
             opps.Sort(StringComparer.Ordinal); // stable order so the seeded pick is reproducible
 
-            Random duelRng = new Random(DuelRngSeed(run.Seed, nodeId));
+            Random duelRng = new Random(DuelRngSeed(run.Seed, run.Act, nodeId));
             string oppFile = opps[duelRng.Next(opps.Count)];
             DeckInfo opp = new DeckInfo();
             opp.File = oppFile;
@@ -260,7 +309,8 @@ namespace YgoMaster
             ds.SetRequiredDefaults();
             // Starting LP: player = current run HP, enemy = per-type config (set after defaults so
             // they aren't zeroed; non-zero so they survive serialization and the engine's defaulting).
-            Dictionary<string, object> hpSettings = RoguelikeSettings.Load(dataDirectory);
+            Dictionary<string, object> hpSettings = RoguelikeSettings.Effective(
+                RoguelikeSettings.Load(dataDirectory), run.Act, run.Ascension);
             if (run.MaxHp <= 0) run.MaxHp = RoguelikeSettings.PlayerMaxHp(hpSettings); // lazy init (old saves)
             int playerLife = run.Hp > 0 ? run.Hp : run.MaxHp;
             ds.life[DuelSettings.PlayerIndex] = playerLife;
@@ -280,9 +330,9 @@ namespace YgoMaster
         }
 
         // Deterministic per-(run, node) seed for everything random about a combat duel.
-        static int DuelRngSeed(long runSeed, int nodeId)
+        static int DuelRngSeed(long runSeed, int act, int nodeId)
         {
-            unchecked { return (int)((uint)(runSeed * 2654435761L) ^ (uint)(nodeId * 40503 + 0x9E3779B9)); }
+            unchecked { return (int)((uint)(runSeed * 2654435761L) ^ (uint)(act * 0x85EBCA77) ^ (uint)(nodeId * 40503 + 0x9E3779B9)); }
         }
 
         // Reachable = entry (-1) -> any node in row 0; otherwise the current node's `next`.

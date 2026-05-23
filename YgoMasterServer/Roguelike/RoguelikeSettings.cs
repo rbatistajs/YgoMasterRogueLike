@@ -29,6 +29,86 @@ namespace YgoMaster
         public static int Width(Dictionary<string, object> s) => Utils.GetValue<int>(s, "width", 4);
         public static int Paths(Dictionary<string, object> s) => Utils.GetValue<int>(s, "paths", 6);
 
+        // ----- acts / ascension -----
+
+        public static int Acts(Dictionary<string, object> s) => Math.Max(1, Utils.GetValue<int>(s, "acts", 3));
+        public static int Ascensions(Dictionary<string, object> s) => Math.Max(1, Utils.GetValue<int>(s, "ascensions", 20));
+
+        // Heal applied (fraction of max HP) when starting each act after the first.
+        public static double InterActHealPercent(Dictionary<string, object> s)
+        {
+            object v;
+            if (s != null && s.TryGetValue("interActHealPercent", out v)) { try { return Convert.ToDouble(v); } catch { } }
+            return 0.0;
+        }
+
+        // Settings for a given act + ascension: base, deep-merged with perAscension[asc] then
+        // perAct[act] (act wins), then ascensionScale applied multiplicatively (× ascension).
+        public static Dictionary<string, object> Effective(Dictionary<string, object> baseSettings, int act, int ascension)
+        {
+            Dictionary<string, object> eff = DeepClone(baseSettings);
+            DeepMerge(eff, ItemAt(Utils.GetValue<List<object>>(baseSettings, "perAscension"), ascension));
+            DeepMerge(eff, ItemAt(Utils.GetValue<List<object>>(baseSettings, "perAct"), act));
+            if (ascension > 0)
+                ApplyScale(eff, Utils.GetValue<Dictionary<string, object>>(baseSettings, "ascensionScale"), ascension);
+            return eff;
+        }
+
+        static Dictionary<string, object> ItemAt(List<object> list, int i)
+        {
+            return (list != null && i >= 0 && i < list.Count) ? list[i] as Dictionary<string, object> : null;
+        }
+
+        static Dictionary<string, object> DeepClone(Dictionary<string, object> d)
+        {
+            return MiniJSON.Json.DeserializeStripped(MiniJSON.Json.Serialize(d ?? new Dictionary<string, object>()))
+                as Dictionary<string, object> ?? new Dictionary<string, object>();
+        }
+
+        // Override `target` with `over`: nested dicts merge key-by-key, anything else replaces.
+        static void DeepMerge(Dictionary<string, object> target, Dictionary<string, object> over)
+        {
+            if (target == null || over == null) return;
+            foreach (KeyValuePair<string, object> kv in over)
+            {
+                object cur;
+                if (kv.Value is Dictionary<string, object> && target.TryGetValue(kv.Key, out cur) && cur is Dictionary<string, object>)
+                    DeepMerge((Dictionary<string, object>)cur, (Dictionary<string, object>)kv.Value);
+                else
+                    target[kv.Key] = kv.Value;
+            }
+        }
+
+        // Multiplicative scaling: each scale entry `key: factor` -> value × (1 + factor·ascension).
+        // Applies to a top-level numeric, every numeric entry of a top-level dict (e.g. enemyHp), or
+        // a matching entry inside typeWeights (e.g. "elite").
+        static void ApplyScale(Dictionary<string, object> eff, Dictionary<string, object> scale, int ascension)
+        {
+            if (scale == null) return;
+            Dictionary<string, object> weights = Utils.GetValue<Dictionary<string, object>>(eff, "typeWeights");
+            foreach (KeyValuePair<string, object> kv in scale)
+            {
+                double factor; try { factor = Convert.ToDouble(kv.Value); } catch { continue; }
+                double mult = 1.0 + factor * ascension;
+                object cur;
+                if (eff.TryGetValue(kv.Key, out cur))
+                {
+                    if (cur is Dictionary<string, object>) ScaleDictEntries((Dictionary<string, object>)cur, mult);
+                    else if (IsNumber(cur)) eff[kv.Key] = Convert.ToDouble(cur) * mult;
+                }
+                else if (weights != null && weights.TryGetValue(kv.Key, out cur) && IsNumber(cur))
+                    weights[kv.Key] = Convert.ToDouble(cur) * mult;
+            }
+        }
+
+        static void ScaleDictEntries(Dictionary<string, object> d, double mult)
+        {
+            List<string> keys = new List<string>(d.Keys);
+            foreach (string k in keys) if (IsNumber(d[k])) d[k] = Convert.ToDouble(d[k]) * mult;
+        }
+
+        static bool IsNumber(object o) { return o is int || o is long || o is double || o is float; }
+
         // type -> weight (duel forced on floor 0, boss fixed on top — not in this table).
         public static Dictionary<string, object> TypeWeights(Dictionary<string, object> s)
         {

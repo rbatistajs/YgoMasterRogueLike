@@ -137,6 +137,7 @@
     <Compile Include="YgoDbSet.cs" />
     <Compile Include="WikiDump\YgoWikiDecks.cs" />
     <Compile Include="Roguelike\RoguelikeRun.cs" />
+    <Compile Include="Roguelike\RoguelikeMeta.cs" />
     <Compile Include="Roguelike\RoguelikeDeckPool.cs" />
     <Compile Include="Roguelike\RoguelikeSettings.cs" />
     <Compile Include="Roguelike\RoguelikeMap.cs" />

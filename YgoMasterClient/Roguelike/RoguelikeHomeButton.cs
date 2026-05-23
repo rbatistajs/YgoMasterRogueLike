@@ -132,10 +132,17 @@ namespace YgoMasterClient
         // Abandon will live inside the run screen later.
         static void OnClick()
         {
-            if (!RoguelikeApi.IsRunActive())
-                RoguelikeApi.StartRun();
-            else
-                RoguelikeRunScreen.Open();
+            if (RoguelikeApi.IsRunActive()) { RoguelikeRunScreen.Open(); return; }
+            int maxAsc = RoguelikeApi.MaxAscension();
+            if (maxAsc <= 0) { RoguelikeApi.StartRun(0); return; } // nothing to pick yet
+            string[] options = new string[maxAsc + 1];
+            for (int i = 0; i <= maxAsc; i++) options[i] = "Ascensão " + i;
+            YgomGame.Menu.ActionSheetViewController.Open("Escolha a Ascensão", options, OnAscensionSelect);
+        }
+
+        static void OnAscensionSelect(IntPtr ctx, int choice)
+        {
+            if (choice >= 0) RoguelikeApi.StartRun(choice);
         }
     }
 }

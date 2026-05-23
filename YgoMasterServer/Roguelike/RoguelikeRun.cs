@@ -21,6 +21,9 @@ namespace YgoMaster
         public int PendingDuelNode = -1;            // combat node whose duel is in progress (-1 = none)
         public int Hp;                              // current run HP (= player's starting LP each duel)
         public int MaxHp;                           // HP cap (snapshot of playerMaxHp at run start)
+        public int Act;                             // current act (0-based)
+        public int Ascension;                       // ascension tier this run is played at
+        public bool Won;                            // set when the final act's boss falls
 
         public Dictionary<string, object> ToDictionary()
         {
@@ -38,6 +41,9 @@ namespace YgoMaster
                 { "pendingDuelNode", PendingDuelNode },
                 { "hp", Hp },
                 { "maxHp", MaxHp },
+                { "act", Act },
+                { "ascension", Ascension },
+                { "won", Won },
             };
         }
 
@@ -61,6 +67,9 @@ namespace YgoMaster
                 PendingDuelNode = Utils.GetValue<int>(d, "pendingDuelNode", -1),
                 Hp         = Utils.GetValue<int>(d, "hp", 0),
                 MaxHp      = Utils.GetValue<int>(d, "maxHp", 0),
+                Act        = Utils.GetValue<int>(d, "act", 0),
+                Ascension  = Utils.GetValue<int>(d, "ascension", 0),
+                Won        = Utils.GetValue<bool>(d, "won", false),
             };
         }
 

@@ -37,11 +37,25 @@ namespace YgoMasterClient
             }
             else if (cmd == "Roguelike.duel_result")
             {
-                // Server applied the result. The map VC is deactivated under the duel screens right
-                // now, so flag it for refresh — it re-renders (fresh state) the moment it re-appears.
-                RoguelikeRunScreen.MarkMapDirty();
+                if (RoguelikeApi.Won())
+                {
+                    // Final boss down: the run is over. Show victory; the dead-run map underneath is
+                    // harmless (home will offer a fresh run at the newly unlocked ascension).
+                    YgomGame.Menu.CommonDialogViewController.OpenConfirmationDialog(
+                        "Vitória!",
+                        "Você completou a run! Ascensão máxima desbloqueada: " + RoguelikeApi.MaxAscension() + ".",
+                        "OK", OnVictoryAck);
+                }
+                else
+                {
+                    // Server applied the result. The map VC is deactivated under the duel screens
+                    // now, so flag a refresh — it re-renders (fresh state, incl. a new act) on reappear.
+                    RoguelikeRunScreen.MarkMapDirty();
+                }
             }
         }
+
+        static void OnVictoryAck() { }
 
         // Win/loss + the player's remaining LP, captured from the engine's Duel.end report (fires
         // before the Duel.end completion above). Stored regardless of mode; only consumed for

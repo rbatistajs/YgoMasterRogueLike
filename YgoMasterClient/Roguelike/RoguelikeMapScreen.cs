@@ -369,7 +369,13 @@ namespace YgoMasterClient
         {
             if (_hpLabel == IntPtr.Zero || _tmpType == IntPtr.Zero) return;
             IntPtr tmp = GameObject.GetComponent(_hpLabel, _tmpType);
-            if (tmp != IntPtr.Zero) TMPro.TMP_Text.SetText(tmp, "HP " + RoguelikeApi.Hp() + " / " + RoguelikeApi.MaxHp());
+            if (tmp == IntPtr.Zero) return;
+            int acts = RoguelikeApi.Acts(); if (acts < 1) acts = 1;
+            string txt = "Ato " + (RoguelikeApi.Act() + 1) + "/" + acts +
+                "    HP " + RoguelikeApi.Hp() + " / " + RoguelikeApi.MaxHp();
+            int asc = RoguelikeApi.Ascension();
+            if (asc > 0) txt += "    Asc " + asc;
+            TMPro.TMP_Text.SetText(tmp, txt);
         }
 
         // (Re)build the nodes/edges/marker inside RgMap from the current run state and scroll to the
