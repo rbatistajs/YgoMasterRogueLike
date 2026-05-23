@@ -1,5 +1,6 @@
 using System;
 using System.Collections.Generic;
+using System.IO;
 
 namespace YgoMaster
 {
@@ -113,5 +114,95 @@ namespace YgoMaster
             if (d == null || !d.TryGetValue(key, out o) || o == null) return false;
             try { value = Convert.ToInt32(o); return true; } catch { return false; }
         }
+
+        // ----- "any" pool (DataLE/Roguelike/CardPool.json) -----
+        // Configurable cid pool for `source:"any"` random picks (and, later, card rewards). Base =
+        // CardList minus the configured/default regulation's banlist; then global and per-ascension
+        // include/exclude. Cached per ascension; restart the server to apply edits.
+        static Dictionary<string, object> _poolCfg;
+        static bool _poolCfgLoaded;
+        static readonly Dictionary<int, HashSet<int>> _anyByAsc = new Dictionary<int, HashSet<int>>();
+
+        static Dictionary<string, object> PoolConfig(string dataDirectory)
+        {
+            if (_poolCfgLoaded) return _poolCfg;
+            _poolCfgLoaded = true;
+            string p = Path.Combine(dataDirectory, "Roguelike", "CardPool.json");
+            if (File.Exists(p))
+            {
+                try { _poolCfg = MiniJSON.Json.DeserializeStripped(File.ReadAllText(p)) as Dictionary<string, object>; }
+                catch (Exception ex) { Console.WriteLine("[Roguelike] CardPool.json parse EX: " + ex.Message); }
+            }
+            return _poolCfg;
+        }
+
+        public static HashSet<int> AnyPool(string dataDirectory, Dictionary<string, object> regulation, int ascension)
+        {
+            HashSet<int> cached;
+            if (_anyByAsc.TryGetValue(ascension, out cached)) return cached;
+
+            Dictionary<string, object> cfg = PoolConfig(dataDirectory);
+            HashSet<int> pool = LoadCardListCids(dataDirectory);
+
+            int regId = DeckInfo.DefaultRegulationId;
+            string regName = cfg != null ? Utils.GetValue<string>(cfg, "regulation") : null;
+            if (!string.IsNullOrEmpty(regName) && !DeckInfo.RegulationIdsByName.TryGetValue(regName, out regId))
+            {
+                Console.WriteLine("[Roguelike] CardPool regulation '" + regName + "' unknown — using default");
+                regId = DeckInfo.DefaultRegulationId;
+            }
+            pool.ExceptWith(Banned(regulation, regId));
+
+            if (cfg != null)
+            {
+                ApplyIncludeExclude(pool, Utils.GetValue<List<object>>(cfg, "include"), Utils.GetValue<List<object>>(cfg, "exclude"));
+                Dictionary<string, object> asc = ItemAt(Utils.GetValue<List<object>>(cfg, "byAscension"), ascension);
+                if (asc != null)
+                    ApplyIncludeExclude(pool, Utils.GetValue<List<object>>(asc, "include"), Utils.GetValue<List<object>>(asc, "exclude"));
+            }
+
+            _anyByAsc[ascension] = pool;
+            Console.WriteLine("[Roguelike] any-pool asc " + ascension + ": " + pool.Count + " cids");
+            return pool;
+        }
+
+        static void ApplyIncludeExclude(HashSet<int> pool, List<object> include, List<object> exclude)
+        {
+            if (include != null) foreach (object o in include) { int c; if (TryCid(o, out c)) pool.Add(c); }
+            if (exclude != null) foreach (object o in exclude) { int c; if (TryCid(o, out c)) pool.Remove(c); }
+        }
+
+        static HashSet<int> Banned(Dictionary<string, object> regulation, int regId)
+        {
+            HashSet<int> banned = new HashSet<int>();
+            Dictionary<string, object> entry = regulation != null
+                ? Utils.GetValue<Dictionary<string, object>>(regulation, regId.ToString()) : null;
+            Dictionary<string, object> avail = entry != null
+                ? Utils.GetValue<Dictionary<string, object>>(entry, "available") : null;
+            List<object> a0 = avail != null ? Utils.GetValue<List<object>>(avail, "a0") : null;
+            if (a0 != null) foreach (object o in a0) { int c; if (TryCid(o, out c)) banned.Add(c); }
+            return banned;
+        }
+
+        static HashSet<int> LoadCardListCids(string dataDirectory)
+        {
+            HashSet<int> cids = new HashSet<int>();
+            string path = Path.Combine(dataDirectory, "CardList.json");
+            if (!File.Exists(path)) { Console.WriteLine("[Roguelike] CardList.json not found — 'any' pool empty"); return cids; }
+            try
+            {
+                Dictionary<string, object> doc = MiniJSON.Json.DeserializeStripped(File.ReadAllText(path)) as Dictionary<string, object>;
+                if (doc != null) foreach (string k in doc.Keys) { int c; if (int.TryParse(k, out c)) cids.Add(c); }
+            }
+            catch (Exception ex) { Console.WriteLine("[Roguelike] CardList.json parse EX: " + ex.Message); }
+            return cids;
+        }
+
+        static Dictionary<string, object> ItemAt(List<object> list, int i)
+        {
+            return (list != null && i >= 0 && i < list.Count) ? list[i] as Dictionary<string, object> : null;
+        }
+
+        static bool TryCid(object o, out int cid) { cid = 0; try { cid = Convert.ToInt32(o); return true; } catch { return false; } }
     }
 }

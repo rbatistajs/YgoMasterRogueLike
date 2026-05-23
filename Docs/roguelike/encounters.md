@@ -159,8 +159,8 @@ ignored; an unknown `cid` is silently skipped by the engine.
 Modifiers merge with per-type defaults from `Settings.json` (`modifierDefaults`): **defaults first,
 then the encounter on top** — cards merge by slot, `extraLp`/`extraHand` sum.
 
-**Random cards.** Instead of `{ "cid": N }`, a card can be drawn at random from a deck — picked
-server-side and seeded, so a resumed duel reproduces it:
+**Random cards.** Instead of `{ "cid": N }`, a card can be drawn at random from a deck or the card
+pool — picked server-side and seeded, so a resumed duel reproduces it:
 
 ```json
 { "random": "monster", "subtype": "effect", "minAtk": 2000, "source": "deck", "deck_owner": "own" }
@@ -171,8 +171,25 @@ server-side and seeded, so a resumed duel reproduces it:
 - `subtype` — monster: `normal` / `effect` / `ritual` / `fusion` / `synchro` / `xyz` / `link`;
   spell/trap: `normal` / `counter` / `field` / `equip` / `continuous` / `quickplay` / `ritual`.
 - `minAtk` / `maxAtk` / `minDef` / `maxDef` / `minLevel` / `maxLevel` — numeric filters (monsters).
-- `source` — `deck` (default; the only source for now). `deck_owner` — `own` (default) / `rival` /
-  `p1` / `p2`. Duplicate picks on a side are avoided; an empty pool drops that card.
+- `source` — `deck` (default) draws from a deck via `deck_owner` (`own` (default) / `rival` / `p1` /
+  `p2`); `any` draws from the configurable card pool (below). Duplicate picks on a side are avoided;
+  an empty pool drops that card.
+
+**`source: "any"` pool** — `DataLE/Roguelike/CardPool.json` defines the pool `any` draws from (and
+that card rewards will reuse):
+
+```json
+{
+  "regulation": "Goat Format",
+  "include": [12345],
+  "exclude": [67890],
+  "byAscension": [ {}, { "include": [99999] } ]
+}
+```
+
+Base = `CardList.json` minus the configured (or server-default) regulation's banlist; then global
+`include`/`exclude`, then `byAscension[asc]` (exact ascension index). Missing file = the default
+regulation's pool. Cached — restart the server to apply.
 
 ---
 

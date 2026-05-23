@@ -389,6 +389,7 @@ namespace YgoMaster
             RoguelikeModifiers.Resolver resolver = new RoguelikeModifiers.Resolver
             {
                 Rng = duelRng, Decks = new DeckInfo[] { player, opp }, DataDir = dataDirectory,
+                Regulation = Regulation, Ascension = run.Ascension,
             };
             RoguelikeModifiers.Apply(starter, duelType, resolver,
                 RoguelikeSettings.ModifierDefaults(lpSettings, nodeType), enc.Modifiers);

@@ -89,6 +89,8 @@ namespace YgoMaster
             public Random Rng;
             public DeckInfo[] Decks;   // [0] = player, [1] = enemy
             public string DataDir;
+            public Dictionary<string, object> Regulation; // for source:"any" pool (banlist)
+            public int Ascension;                          // for source:"any" per-ascension pool
             readonly HashSet<int>[] _used = { new HashSet<int>(), new HashSet<int>() };
 
             public int? Resolve(Dictionary<string, object> spec, int playerIdx)
@@ -116,9 +118,11 @@ namespace YgoMaster
             HashSet<int> BuildPool(Dictionary<string, object> spec, int playerIdx)
             {
                 string source = Utils.GetValue<string>(spec, "source");
+                if (source == "any")
+                    return RoguelikeCardPool.AnyPool(DataDir, Regulation, Ascension);
                 if (!string.IsNullOrEmpty(source) && source != "deck")
                 {
-                    Console.WriteLine("[Roguelike] modifier random source='" + source + "' not supported yet — use 'deck'");
+                    Console.WriteLine("[Roguelike] modifier random source='" + source + "' unknown — use 'deck' or 'any'");
                     return null;
                 }
                 string owner = Utils.GetValue<string>(spec, "deck_owner");
