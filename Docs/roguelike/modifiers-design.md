@@ -93,31 +93,35 @@ In `BuildRoguelikeDuel`, after `ds.life`/`ds.hnum` bases are set and `ds.ToDicti
    which used a fixed 8000/5 base.
 4. `duelDto["duelStarterData"] = dsDict`.
 
-Determinism: pinned modifiers are static → resume-safe. Random (phase 2+) must use the duel seed
-(`DuelRngSeed`) instead of a static `Random`, so a resumed duel re-rolls identically.
+Determinism: pinned modifiers are static → resume-safe. Random picks reuse the duel RNG (`duelRng`,
+seeded by `DuelRngSeed`), so a resumed duel re-rolls identically.
 
-## What we port
+## Implementation (roguelike-native, isolated in `Roguelike/`)
 
-- **`ModifierApplier.cs`** (`YgoMaster.Modifiers`) — depends only on `Utils`. Adapt: `Apply` takes
-  base life/hand and adds deltas (no 8000/5 reset); keep `MergeModifiers`/encode as-is.
-- **`DuelSettings.Goat.cs`** — `SetCmds` + `random_specs` + `regulation_name`. Needed for phase 2/3
-  (random). Phase 1 only needs the `cmds` key round-tripping through `FromDictionary`/`ToDictionary`
-  (verify the rogue fork's `FromDictionary` reconstructs `cmds`).
-- **`RuntimeRandomResolver.cs`** — phase 2/3. Deps present in the fork (`DeckInfo.GetAllCards`,
-  `RegulationIdsByName`, `CardKind`) except `DuelDllProps` (card-data DLL queries) needed only for
-  spec filtering in phase 3.
+Rather than importing the upstream `Goat/` files, equivalent roguelike-owned code was written:
+
+- **`RoguelikeModifiers.cs`** — merge (`player`/`enemy` keys), encode pinned/random cards → `cmds`,
+  and add `extraLp`/`extraHand` deltas onto the dict's base life/hnum (no 8000/5 reset). Holds a
+  seeded `Resolver` for random picks.
+- **`RoguelikeCardPool.cs`** — a `YdkHelper.GameCardInfo` classifier (no `duel.dll`) that answers
+  "does cid match this random spec?" (kind / subtype / atk / def / level).
+
+No `DuelSettings.Goat` / `RuntimeRandomResolver` / `DuelDllProps` needed — random is resolved inline
+at `BuildRoguelikeDuel` (the server already has both decks + the duel seed), so there's no
+`random_specs` round-trip and no server-side DLL card queries.
 
 ## Phasing
 
-- **Phase 1 — pinned + deltas:** `ModifierApplier` (cmds for pinned cids) + `extraLp`/`extraHand`
-  deltas + config (`Encounters.modifiers`, `Settings.modifierDefaults`) + `BuildRoguelikeDuel` wire.
-  No resolver, no `DuelDllProps`. Covers scripted boards/hands/field-spells and LP/hand handicaps.
-- **Phase 2 — random (unfiltered):** port `RuntimeRandomResolver` + `DuelSettings.Goat`; seed it
-  with the duel seed; pick from deck/regulation pool without atk/type filtering.
-- **Phase 3 — random (filtered):** port `DuelDllProps` (card-data DLL load + `DLL_CardGet*`) for
-  full `random`/`subtype`/`minAtk`… filtering.
-- **Later — relics:** add a player-modifier layer sourced from run state, plus the reward flow that
-  grants relics.
+- **Phase 1 (done) — pinned + deltas:** `RoguelikeModifiers` encodes pinned cids → `cmds` and adds
+  `extraLp`/`extraHand` onto base LP/hand; config + `BuildRoguelikeDuel` wire. Covers scripted
+  boards/hands/field-spells and LP/hand handicaps.
+- **Phase 2 (done) — random (filtered), no DLL:** `RoguelikeModifiers.Resolver` + `RoguelikeCardPool`
+  resolve `random` specs server-side, seeded by `duelRng`, filtered by kind/subtype/atk/def/level via
+  `YdkHelper.GameCardInfo` (pure-C# `CARD_Prop` parse — no `duel.dll`). `source: "deck"` only
+  (`deck_owner` own/rival/p1/p2); duplicates per side avoided; empty pool drops the card.
+- **Deferred — `source: "any"`:** random from the regulation's allowed pool needs CardList +
+  Regulation plumbing; `deck` covers the main use case (a card from the opponent's own deck).
+- **Later — relics:** a player-modifier layer sourced from run state + the reward flow that grants them.
 
 ## Edge cases
 
@@ -125,7 +129,8 @@ Determinism: pinned modifiers are static → resume-safe. Random (phase 2+) must
 - Bad/unknown `cid` → `DLL_DuelComCheatCard` no-ops on the client (no crash).
 - `extraLp`/`extraHand` clamp the result to ≥ 1.
 - More cards than slots (monsters/spellTraps > 5) → extra entries past the slot count are ignored.
-- Random spec with no resolver (phase 1) → not supported; document "pinned only" until phase 2.
+- Random spec whose filtered pool is empty → that card is dropped (no broken placement).
+- Random `source: "any"` → not wired yet; logged and skipped (use `source: "deck"`).
 - `player`/`enemy` both optional; either may carry only deltas (no cards).
 
 ## Verification (no unit tests — IL2CPP)

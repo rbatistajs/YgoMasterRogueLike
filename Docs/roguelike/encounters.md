@@ -159,8 +159,20 @@ ignored; an unknown `cid` is silently skipped by the engine.
 Modifiers merge with per-type defaults from `Settings.json` (`modifierDefaults`): **defaults first,
 then the encounter on top** — cards merge by slot, `extraLp`/`extraHand` sum.
 
-> Random cards (e.g. "a random Effect monster from the deck") are planned for a later phase — for now
-> use pinned `cid`s.
+**Random cards.** Instead of `{ "cid": N }`, a card can be drawn at random from a deck — picked
+server-side and seeded, so a resumed duel reproduces it:
+
+```json
+{ "random": "monster", "subtype": "effect", "minAtk": 2000, "source": "deck", "deck_owner": "own" }
+```
+
+- `random` — `monster` / `main_monster` / `extra_monster` / `spell` / `trap` / `field_spell` /
+  `spell_or_trap` (omit or `any` = no kind filter).
+- `subtype` — monster: `normal` / `effect` / `ritual` / `fusion` / `synchro` / `xyz` / `link`;
+  spell/trap: `normal` / `counter` / `field` / `equip` / `continuous` / `quickplay` / `ritual`.
+- `minAtk` / `maxAtk` / `minDef` / `maxDef` / `minLevel` / `maxLevel` — numeric filters (monsters).
+- `source` — `deck` (default; the only source for now). `deck_owner` — `own` (default) / `rival` /
+  `p1` / `p2`. Duplicate picks on a side are avoided; an empty pool drops that card.
 
 ---
 

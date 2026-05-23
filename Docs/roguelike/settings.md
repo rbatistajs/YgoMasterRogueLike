@@ -189,7 +189,8 @@ A per-ascension handicap via the existing override pipeline:
 ]
 ```
 
-> Random cards are a later phase; pinned `cid`s only for now.
+> Card specs may be pinned (`cid`) or random — see
+> [`Encounters.json` → Modifiers](encounters.md#modifiers-starting-board).
 
 ---
 

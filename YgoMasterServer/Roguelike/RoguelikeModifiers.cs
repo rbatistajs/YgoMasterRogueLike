@@ -80,35 +80,80 @@ namespace YgoMaster
             return new Dictionary<string, object> { { "player", player }, { "enemy", enemy } };
         }
 
-        // ----- encode (pinned cids only) -----
-        static int? PinnedCid(Dictionary<string, object> spec)
+        // ----- card resolution (pinned cid or seeded random pick) -----
+        // Resolves a card spec to a real cid: a pinned `cid`, or a `random` pick from a deck pool
+        // filtered by RoguelikeCardPool and deduped per player. Seeded (Rng) + server-side, so a
+        // resumed duel reproduces the same cards. A null/empty Resolver yields pinned cids only.
+        public class Resolver
         {
-            if (spec == null) return null;
-            object v;
-            if (spec.TryGetValue("cid", out v)) { try { return Convert.ToInt32(v); } catch { } }
-            if (spec.ContainsKey("random"))
-                Console.WriteLine("[Roguelike] modifier 'random' cids need a later phase — skipped");
-            return null;
+            public Random Rng;
+            public DeckInfo[] Decks;   // [0] = player, [1] = enemy
+            public string DataDir;
+            readonly HashSet<int>[] _used = { new HashSet<int>(), new HashSet<int>() };
+
+            public int? Resolve(Dictionary<string, object> spec, int playerIdx)
+            {
+                if (spec == null) return null;
+                object v;
+                bool hasRandom = spec.ContainsKey("random");
+                if (spec.TryGetValue("cid", out v) && !hasRandom)
+                {
+                    try { return Convert.ToInt32(v); } catch { return null; }
+                }
+                if (!hasRandom || Rng == null) return null;
+                HashSet<int> pool = BuildPool(spec, playerIdx);
+                if (pool == null) return null;
+                HashSet<int> used = _used[playerIdx == 0 ? 0 : 1];
+                List<int> cands = new List<int>();
+                foreach (int cid in pool)
+                    if (!used.Contains(cid) && RoguelikeCardPool.Matches(DataDir, cid, spec)) cands.Add(cid);
+                if (cands.Count == 0) return null;
+                int pick = cands[Rng.Next(cands.Count)];
+                used.Add(pick);
+                return pick;
+            }
+
+            HashSet<int> BuildPool(Dictionary<string, object> spec, int playerIdx)
+            {
+                string source = Utils.GetValue<string>(spec, "source");
+                if (!string.IsNullOrEmpty(source) && source != "deck")
+                {
+                    Console.WriteLine("[Roguelike] modifier random source='" + source + "' not supported yet — use 'deck'");
+                    return null;
+                }
+                string owner = Utils.GetValue<string>(spec, "deck_owner");
+                int idx;
+                switch (owner)
+                {
+                    case "p1": idx = 0; break;
+                    case "p2": idx = 1; break;
+                    case "rival": idx = 1 - playerIdx; break;
+                    default: idx = playerIdx; break; // "own" + fallback
+                }
+                if (Decks == null || idx < 0 || idx >= Decks.Length || Decks[idx] == null) return null;
+                return new HashSet<int>(Decks[idx].GetAllCards(true, true, false));
+            }
         }
 
+        // ----- encode -----
         static List<object> EmitCard(int playerIdx, int pos, int index, int cid, int prm, int df)
         {
             return new List<object> { 0, playerIdx, pos, index, cid, prm, df };
         }
 
-        static void EmitSide(List<object> cmds, int playerIdx, Dictionary<string, object> cfg)
+        static void EmitSide(List<object> cmds, int playerIdx, Dictionary<string, object> cfg, Resolver r)
         {
             if (cfg == null) return;
 
             Dictionary<string, object> fs = Utils.GetValue<Dictionary<string, object>>(cfg, "fieldSpell");
-            if (fs != null) { int? c = PinnedCid(fs); if (c.HasValue) cmds.Add(EmitCard(playerIdx, POS_FIELD, 0, c.Value, 1, 0)); }
+            if (fs != null) { int? c = r.Resolve(fs, playerIdx); if (c.HasValue) cmds.Add(EmitCard(playerIdx, POS_FIELD, 0, c.Value, 1, 0)); }
 
             List<object> monsters = Utils.GetValue<List<object>>(cfg, "monsters");
             if (monsters != null)
                 for (int s = 0; s < monsters.Count && s < MonsterSlots.Length; s++)
                 {
                     Dictionary<string, object> m = monsters[s] as Dictionary<string, object>;
-                    int? c = PinnedCid(m); if (!c.HasValue) continue;
+                    int? c = r.Resolve(m, playerIdx); if (!c.HasValue) continue;
                     int[] pose;
                     string key = Utils.GetValue<string>(m, "pos") ?? "atk";
                     if (!MonsterPos.TryGetValue(key, out pose)) pose = new[] { 1, 0 };
@@ -120,7 +165,7 @@ namespace YgoMaster
                 for (int s = 0; s < sts.Count && s < SpellTrapSlots.Length; s++)
                 {
                     Dictionary<string, object> st = sts[s] as Dictionary<string, object>;
-                    int? c = PinnedCid(st); if (!c.HasValue) continue;
+                    int? c = r.Resolve(st, playerIdx); if (!c.HasValue) continue;
                     int[] pose;
                     string key = Utils.GetValue<string>(st, "pos") ?? "set";
                     if (!StPos.TryGetValue(key, out pose)) pose = new[] { 0, 0 };
@@ -133,7 +178,7 @@ namespace YgoMaster
                 int hi = 0;
                 foreach (object o in hand)
                 {
-                    int? c = PinnedCid(o as Dictionary<string, object>); if (!c.HasValue) continue;
+                    int? c = r.Resolve(o as Dictionary<string, object>, playerIdx); if (!c.HasValue) continue;
                     cmds.Add(EmitCard(playerIdx, POS_HAND, hi, c.Value, 0, 0));
                     hi++;
                 }
@@ -145,15 +190,16 @@ namespace YgoMaster
         // and add extraLp/extraHand deltas onto the dict's existing life/hnum base. No-op when nothing
         // is configured.
         public static void Apply(Dictionary<string, object> duelDict, string duelType,
-            params Dictionary<string, object>[] layers)
+            Resolver resolver, params Dictionary<string, object>[] layers)
         {
+            if (resolver == null) resolver = new Resolver();
             Dictionary<string, object> merged = Merge(layers);
             Dictionary<string, object> player = Utils.GetValue<Dictionary<string, object>>(merged, "player");
             Dictionary<string, object> enemy = Utils.GetValue<Dictionary<string, object>>(merged, "enemy");
 
             List<object> cmds = new List<object>();
-            EmitSide(cmds, 0, player);
-            EmitSide(cmds, 1, enemy);
+            EmitSide(cmds, 0, player, resolver);
+            EmitSide(cmds, 1, enemy, resolver);
 
             int extraLpP = GetInt(player, "extraLp", 0),   extraLpE = GetInt(enemy, "extraLp", 0);
             int extraHandP = GetInt(player, "extraHand", 0), extraHandE = GetInt(enemy, "extraHand", 0);

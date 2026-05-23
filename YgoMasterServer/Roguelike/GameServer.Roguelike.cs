@@ -386,7 +386,11 @@ namespace YgoMaster
             // encounter) compile into cmds (starting board) and LP/hand deltas on top of the base.
             Dictionary<string, object> starter = ds.ToDictionary();
             string duelType = ds.Type == 4 ? "Rush" : "Normal";
-            RoguelikeModifiers.Apply(starter, duelType,
+            RoguelikeModifiers.Resolver resolver = new RoguelikeModifiers.Resolver
+            {
+                Rng = duelRng, Decks = new DeckInfo[] { player, opp }, DataDir = dataDirectory,
+            };
+            RoguelikeModifiers.Apply(starter, duelType, resolver,
                 RoguelikeSettings.ModifierDefaults(lpSettings, nodeType), enc.Modifiers);
             // $.Duel drives the production visuals (cosmetics only).
             Dictionary<string, object> duelDto = ds.ToDictionaryForSoloStart();
