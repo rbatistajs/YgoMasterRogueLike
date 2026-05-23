@@ -8,8 +8,8 @@ ascension count, and per-act / per-ascension config overrides are all data-drive
 
 A run has one map (built at choose_deck from the run seed) with one `boss` node at the top.
 Beating the boss only credits currency — there is no "act" or "run won" concept; a run ends only
-on loss (HP 0). Config (`RoguelikeSettings`) is global: layout/floors/width/paths, typeWeights/
-bands/typeRules/forcedRows, playerMaxHp/healPercentPerCombat/enemyHp. `roguelike.json` holds the
+on loss (LP 0). Config (`RoguelikeSettings`) is global: layout/floors/width/paths, typeWeights/
+bands/typeRules/forcedRows, playerMaxLp/healPercentPerCombat/enemyLp. `roguelike.json` holds the
 run and is deleted on loss/abandon.
 
 ## Config (`Settings.json`)
@@ -20,7 +20,7 @@ run and is deleted on loss/abandon.
 
 "perAct": [ { ...act0 overrides... }, { ...act1... }, { ...act2... } ],
 "perAscension": [ { ...asc0 overrides... }, { ...asc1... } ],
-"ascensionScale": { "enemyHp": 0.05, "playerMaxHp": -0.01 },
+"ascensionScale": { "enemyLp": 0.05, "playerMaxLp": -0.01 },
 
 "interActHealPercent": 0.30
 ```
@@ -29,8 +29,8 @@ run and is deleted on loss/abandon.
 - **`perAct[k]`** — partial config deep-merged over the base for act `k` (replaces those keys).
 - **`perAscension[a]`** — partial config deep-merged for ascension `a` (explicit per-tier tweaks).
 - **`ascensionScale`** — multiplicative per-level factors for numeric keys; applied as
-  `value × (1 + factor × ascension)`. For `enemyHp` (a per-type dict) every numeric entry scales.
-- **`interActHealPercent`** — heal fraction of max HP applied when starting each act (just another
+  `value × (1 + factor × ascension)`. For `enemyLp` (a per-type dict) every numeric entry scales.
+- **`interActHealPercent`** — heal fraction of max LP applied when starting each act (just another
   config key, so it's overridable per act/ascension).
 
 ### Effective resolution
@@ -42,12 +42,12 @@ run and is deleted on loss/abandon.
 4. apply `ascensionScale` × `ascension` to the named numeric keys (last).
 
 Deep-merge: for dict values, merge key-by-key; otherwise the override replaces. The existing
-accessors (`Floors`, `Width`, `TypeWeights`, `EnemyHpFor`, `PlayerMaxHp`, `HealPercent`, bands,
+accessors (`Floors`, `Width`, `TypeWeights`, `EnemyLpFor`, `PlayerMaxLp`, `HealPercent`, bands,
 rules, forced rows) read the effective dict unchanged — callers pass `Effective(...)` instead of
 the raw base.
 
 New accessors: `Acts(s)` (default 3), `Ascensions(s)` (default 20), `InterActHealPercent(s)`
-(default 0.0 = carry HP).
+(default 0.0 = carry LP).
 
 ## State
 
@@ -61,23 +61,23 @@ New accessors: `Acts(s)` (default 3), `Ascensions(s)` (default 20), `InterActHea
 - **start_run** `{ascension}`: clamp to `[0, meta.maxAscension]`; `run.Ascension = chosen`,
   `run.Act = 0`, `run.Won = false`; roll deck offers as today.
 - **choose_deck**: `eff = Effective(base, 0, run.Ascension)`; build the act-0 map with
-  `seed = ActSeed(run.Seed, 0)`; `run.MaxHp = run.Hp = PlayerMaxHp(eff)`.
+  `seed = ActSeed(run.Seed, 0)`; `run.MaxLp = run.Lp = PlayerMaxLp(eff)`.
 - **duel_result** (win on the pending node where `NodeType == "boss"`):
   - if `run.Act < Acts(base) - 1`: `run.Act++`; `eff = Effective(base, run.Act, run.Ascension)`;
     rebuild map with `ActSeed(run.Seed, run.Act)`, `Position = -1`, `Visited = []`; carry currency
-    and deck; heal `Hp = min(MaxHp, Hp + InterActHealPercent(eff) × MaxHp)`; credit boss reward.
+    and deck; heal `Lp = min(MaxLp, Lp + InterActHealPercent(eff) × MaxLp)`; credit boss reward.
   - else (final act boss): `run.Won = true`, `run.Active = false`; credit boss reward;
     `meta.maxAscension = min(Ascensions(base) - 1, max(meta.maxAscension, run.Ascension + 1))`; save meta.
-  - non-boss combats and loss: unchanged (HP carry/heal, currency, HP 0 = death).
+  - non-boss combats and loss: unchanged (LP carry/heal, currency, LP 0 = death).
 - `ActSeed(runSeed, act)` = a deterministic per-act seed (e.g. `(int)(runSeed * 31 + act * 2654435761)`).
-- `BuildRoguelikeDuel` uses `Effective(base, run.Act, run.Ascension)` for `EnemyHpFor`.
+- `BuildRoguelikeDuel` uses `Effective(base, run.Act, run.Ascension)` for `EnemyLpFor`.
 
 ## Client
 
 - **start_run**: before starting, open an ascension picker — `ActionSheetViewController.Open` with
   one option per `0..meta.maxAscension` ("Ascensão N"); the choice is sent as `start_run {ascension}`.
   (When `maxAscension == 0` there's nothing to pick — start at 0 directly.)
-- **Map header**: show `Ato X/N` and `Asc A` alongside HP. The post-duel `MarkMapDirty` refresh
+- **Map header**: show `Ato X/N` and `Asc A` alongside LP. The post-duel `MarkMapDirty` refresh
   already re-renders the (new) act's map when it reappears.
 - **Run won**: `RoguelikeFlow` shows a victory dialog (`CommonDialogViewController`) on the
   duel_result that set `won = true`; the home reflects the new `maxAscension` next time it's opened.
@@ -99,8 +99,8 @@ and `MaxAscension()` (piggybacked into the run/home payload from `RoguelikeMeta`
 ## Verification (no unit tests — IL2CPP)
 
 1. Build server + client.
-2. `Settings.json` with `acts: 3`, an `enemyHp` bump in `perAct[2]`, `ascensionScale.enemyHp 0.1`.
+2. `Settings.json` with `acts: 3`, an `enemyLp` bump in `perAct[2]`, `ascensionScale.enemyLp 0.1`.
 3. New run → ascension modal shows `Ascensão 0` only (maxAscension 0). Start, clear act 1 boss →
-   map regenerates as act 2 (header `Ato 2/3`), HP healed by `interActHealPercent`.
+   map regenerates as act 2 (header `Ato 2/3`), LP healed by `interActHealPercent`.
 4. Clear act 3 boss → victory dialog; reopen home → ascension modal now offers `0` and `1`.
-5. Start an ascension-1 run → confirm enemy HP higher (scale applied).
+5. Start an ascension-1 run → confirm enemy LP higher (scale applied).

@@ -9,15 +9,20 @@ namespace YgoMaster
         public int Row;
         public int Col;
         public List<int> Next = new List<int>();   // connected nodes in Row+1
+        public string Encounter;     // baked encounter id (boss only; chosen at map-gen)
+        public string Name;          // display name for the baked encounter (boss only)
 
         public Dictionary<string, object> ToDictionary()
         {
             List<object> next = new List<object>();
             foreach (int n in Next) next.Add(n);
-            return new Dictionary<string, object>
+            Dictionary<string, object> d = new Dictionary<string, object>
             {
                 { "id", Id }, { "type", Type }, { "row", Row }, { "col", Col }, { "next", next },
             };
+            if (!string.IsNullOrEmpty(Encounter)) d["encounter"] = Encounter;
+            if (!string.IsNullOrEmpty(Name)) d["name"] = Name;
+            return d;
         }
     }
 

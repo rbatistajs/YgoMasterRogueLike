@@ -1,12 +1,12 @@
 # Roguelike `Settings.json` Reference
 
 The roguelike mode is fully data-driven by **`DataLE/Roguelike/Settings.json`**. Edit this file to
-tune the map shape, node distribution, run length (acts), difficulty (ascension), and combat HP —
+tune the map shape, node distribution, run length (acts), difficulty (ascension), and combat LP —
 no recompiling. Every key is optional; missing keys fall back to the defaults below, so the mode
 runs even with an empty `{}`.
 
 **When changes apply:** the file is read once and cached, so **restart the server** after editing.
-Changes affect **new runs** only (an in-progress run keeps the map/HP it was generated with).
+Changes affect **new runs** only (an in-progress run keeps the map/LP it was generated with).
 
 ---
 
@@ -15,7 +15,9 @@ Changes affect **new runs** only (an in-progress run keeps the map/HP it was gen
 - [Props at a glance](#props-at-a-glance)
 - [Map shape](#map-shape) — [`layout`](#layout) · [`floors`](#floors) · [`width`](#width) · [`paths`](#paths)
 - [Run structure (acts & ascension)](#run-structure-acts--ascension) — [`acts`](#acts) · [`ascensions`](#ascensions) · [`interActHealPercent`](#interacthealpercent)
-- [Combat & HP](#combat--hp) — [`playerMaxHp`](#playermaxhp) · [`healPercentPerCombat`](#healpercentpercombat) · [`enemyHp`](#enemyhp)
+- [Combat & LP](#combat--lp) — [`playerMaxLp`](#playermaxlp) · [`healPercentPerCombat`](#healpercentpercombat) · [`enemyLp`](#enemylp)
+- [CPU AI](#cpu-ai) — [`cpuRate`](#cpurate) · [`cpuFlag`](#cpuflag)
+- [Modifiers](#modifiers) — [`modifierDefaults`](#modifierdefaults)
 - [Node types & distribution](#node-types--distribution) — [`typeWeights`](#typeweights) · [`bands`](#bands) · [`typeRules`](#typerules) · [`forcedRows`](#forcedrows)
 - [Row indexing (negative indices)](#row-indexing-negative-indices)
 - [Per-act & per-ascension overrides](#per-act--per-ascension-overrides) — [`perAct` / `perAscension`](#peract-and-perascension) · [`ascensionScale`](#ascensionscale) · [Resolution order](#resolution-order)
@@ -34,10 +36,13 @@ Changes affect **new runs** only (an in-progress run keeps the map/HP it was gen
 | [`paths`](#paths) | int | `6` | Bottom→top paths carved through the grid. |
 | [`acts`](#acts) | int | `3` | Acts per run (each act is a fresh map + boss). |
 | [`ascensions`](#ascensions) | int | `20` | Number of ascension difficulty tiers. |
-| [`interActHealPercent`](#interacthealpercent) | number | `0.0` | HP healed (fraction of max) when starting each act after the first. |
-| [`playerMaxHp`](#playermaxhp) | int | `8000` | Run HP: starting value and cap. |
-| [`healPercentPerCombat`](#healpercentpercombat) | number | `0.10` | HP healed (fraction of max) after every won combat. |
-| [`enemyHp`](#enemyhp) | object | `{default:2000}` | Enemy starting LP per node type. |
+| [`interActHealPercent`](#interacthealpercent) | number | `0.0` | LP healed (fraction of max) when starting each act after the first. |
+| [`playerMaxLp`](#playermaxlp) | int | `8000` | Run LP: starting value and cap. |
+| [`healPercentPerCombat`](#healpercentpercombat) | number | `0.10` | LP healed (fraction of max) after every won combat. |
+| [`enemyLp`](#enemylp) | object | `{default:2000}` | Enemy starting LP per node type. |
+| [`cpuRate`](#cpurate) | int | `100` | CPU AI strength (−100…100; 100 = max). |
+| [`cpuFlag`](#cpuflag) | string | `null` | CPU AI behavior flag (None/Fool/Light/…). |
+| [`modifierDefaults`](#modifierdefaults) | object | `{}` | Per-type starting board + LP/hand deltas (merged under encounter modifiers). |
 | [`typeWeights`](#typeweights) | object | see below | Base random weights for node types. |
 | [`bands`](#bands) | array | `[]` | Per-row-zone weight tables. |
 | [`typeRules`](#typerules) | object | `{}` | Per-type floor ranges (min/max). |
@@ -84,7 +89,7 @@ merges. Paths beyond `width` simply overlap.
 *(int, default 3, min 1)*
 A run is divided into this many acts. Each act is its own freshly generated map ending in a boss.
 Beat the boss → the next act's map is generated and you continue with your **same deck, currency,
-and HP**. Beat the **final** act's boss → the run is won.
+and LP**. Beat the **final** act's boss → the run is won.
 
 ### `ascensions`
 
@@ -97,39 +102,94 @@ ascension from `0` up to your highest unlocked.
 ### `interActHealPercent`
 
 *(number, default 0.0)*
-Fraction of **max HP** healed when a new act begins (after the first act). `0.0` = carry HP with no
+Fraction of **max LP** healed when a new act begins (after the first act). `0.0` = carry LP with no
 heal (attrition); `1.0` = full heal each act. Because it's just another config key, it can be
 overridden per act/ascension (e.g. heal more in later acts, less at high ascension).
 
 ---
 
-## Combat & HP
+## Combat & LP
 
-The player has a persistent **run HP** that doubles as the starting Life Points of every duel. HP
+The player has a persistent **run LP** that doubles as the starting Life Points of every duel. LP
 carries across duels and acts; reaching 0 ends the run.
 
-### `playerMaxHp`
+### `playerMaxLp`
 
 *(int, default 8000)*
-The run's starting HP and its cap — heals never exceed it. Each duel begins with the player's
-current run HP as their LP.
+The run's starting LP and its cap — heals never exceed it. Each duel begins with the player's
+current run LP as their LP.
 
 ### `healPercentPerCombat`
 
 *(number, default 0.10)*
-After winning a combat, run HP becomes `min(maxHp, remainingLP + healPercentPerCombat × maxHp)`.
+After winning a combat, run LP becomes `min(maxLp, remainingLP + healPercentPerCombat × maxLp)`.
 So `0.10` restores 10% of max on top of whatever LP you finished the duel with. Losing a duel
 (LP 0) ends the run.
 
-### `enemyHp`
+### `enemyLp`
 
 *(object, default `{ "default": 2000 }`)*
 Enemy starting LP, looked up by the combat node's type. The `default` entry covers any type without
-its own entry; if `enemyHp` is missing entirely the fallback is `2000`.
+its own entry; if `enemyLp` is missing entirely the fallback is `2000`.
 
 ```json
-"enemyHp": { "default": 2000, "elite": 4000, "boss": 8000 }
+"enemyLp": { "default": 2000, "elite": 4000, "boss": 8000 }
 ```
+
+---
+
+## CPU AI
+
+The opponent's AI is configured per duel and can be overridden per encounter in `Encounters.json`;
+these keys are the global fallbacks.
+
+### `cpuRate`
+
+*(int, default 100)*
+AI strength, clamped to −100…100. `100` = full strength (the default). Lower values weaken the AI;
+negatives also flag it defensive. As a top-level numeric key it can be scaled by `ascensionScale`
+(e.g. start weaker and ramp up with ascension).
+
+### `cpuFlag`
+
+*(string, default `null` = None)*
+AI behavior mode — a `YgomGame.Duel.Engine.CpuParam` name: `None` (full default AI), `Def`
+(defensive), `Fool` (plays badly), `Light` (weaker logic), `MyTurnOnly` (won't respond on your
+turn), `AttackOnly`, or `Simple`. An unknown name falls back to `None`.
+
+---
+
+## Modifiers
+
+`modifierDefaults` sets a **per-node-type starting board** + LP/hand deltas applied to every duel of
+that type, **merged underneath** each encounter's own `modifiers` (encounter wins; cards merge by
+slot, `extraLp`/`extraHand` sum). Same shape as an encounter's `modifiers` (`player` / `enemy` sides
+with `fieldSpell` / `monsters` / `spellTraps` / `hand` / `extraLp` / `extraHand`) — see
+[`Encounters.json` → Modifiers](encounters.md#modifiers-starting-board).
+
+### `modifierDefaults`
+
+*(object, default `{}`)*
+Keyed by node type (`duel` / `elite` / `boss`). Because it's a normal config key, `perAct` /
+`perAscension` / scaling all apply — e.g. add an enemy handicap only from a high ascension.
+
+```json
+"modifierDefaults": {
+  "elite": { "enemy": { "extraLp": 1000 } },
+  "boss":  { "enemy": { "extraLp": 2000, "extraHand": 1 } }
+}
+```
+
+A per-ascension handicap via the existing override pipeline:
+
+```json
+"perAscension": [
+  {}, {}, {}, {}, {},
+  { "modifierDefaults": { "duel": { "enemy": { "extraHand": 1 } } } }
+]
+```
+
+> Random cards are a later phase; pinned `cid`s only for now.
 
 ---
 
@@ -141,7 +201,7 @@ actions are future work).
 | Type | Combat? | Notes |
 |---|---|---|
 | `duel` | yes | Standard fight. Row 0 is always `duel`. |
-| `elite` | yes | Tougher fight (give it more `enemyHp`, bigger reward). |
+| `elite` | yes | Tougher fight (give it more `enemyLp`, bigger reward). |
 | `boss` | yes | One per act, fixed on the top row (structural — not drawn from weights). |
 | `event` | no | Marker (future). |
 | `shop` | no | Marker (future). |
@@ -226,8 +286,8 @@ for explicit, hand-tuned overrides.
 ```json
 "perAct": [
   {},                                                              // act 1 = base
-  { "floors": 10, "enemyHp": { "default": 2500, "boss": 10000 } }, // act 2
-  { "floors": 12, "enemyHp": { "default": 3000, "boss": 12000 } }  // act 3
+  { "floors": 10, "enemyLp": { "default": 2500, "boss": 10000 } }, // act 2
+  { "floors": 12, "enemyLp": { "default": 3000, "boss": 12000 } }  // act 3
 ]
 ```
 
@@ -236,12 +296,12 @@ for explicit, hand-tuned overrides.
 *(object, default `{}`)*
 Progressive **multiplicative** scaling so you don't have to write 20 explicit `perAscension` entries.
 Each `key: factor` multiplies the matching numeric value by `(1 + factor × ascension)`. It applies to:
-- a top-level numeric key (e.g. `playerMaxHp`),
-- every numeric entry of a top-level object (e.g. `enemyHp`),
+- a top-level numeric key (e.g. `playerMaxLp`),
+- every numeric entry of a top-level object (e.g. `enemyLp`),
 - a matching entry inside `typeWeights` (e.g. `elite`).
 
 ```json
-"ascensionScale": { "enemyHp": 0.05, "elite": 0.03 }
+"ascensionScale": { "enemyLp": 0.05, "elite": 0.03 }
 ```
 At ascension 4 this makes enemy LP `×1.20` and the `elite` weight `×1.12`.
 
@@ -270,8 +330,8 @@ So **act overrides ascension overrides base**, and scaling is applied last on nu
 
   "typeWeights": { "duel": 0.6, "elite": 0.12, "event": 0.12, "shop": 0.08, "reward": 0.08 },
 
-  "playerMaxHp": 8000,
-  "enemyHp": { "default": 2000, "elite": 4000, "boss": 8000 },
+  "playerMaxLp": 8000,
+  "enemyLp": { "default": 2000, "elite": 4000, "boss": 8000 },
   "healPercentPerCombat": 0.10,
 
   "bands": [
@@ -287,15 +347,15 @@ So **act overrides ascension overrides base**, and scaling is applied last on nu
 
   "perAct": [
     {},
-    { "floors": 10, "enemyHp": { "default": 2500, "elite": 5000, "boss": 10000 } },
-    { "floors": 12, "enemyHp": { "default": 3000, "elite": 6000, "boss": 12000 } }
+    { "floors": 10, "enemyLp": { "default": 2500, "elite": 5000, "boss": 10000 } },
+    { "floors": 12, "enemyLp": { "default": 3000, "elite": 6000, "boss": 12000 } }
   ],
-  "ascensionScale": { "enemyHp": 0.05 }
+  "ascensionScale": { "enemyLp": 0.05 }
 }
 ```
 
 This run: 3 acts (8/10/12 floors), 30% inter-act heal, elite/reward gated to deeper floors, a reward
-row before each boss, escalating enemy HP per act, and +5% enemy HP per ascension level.
+row before each boss, escalating enemy LP per act, and +5% enemy LP per ascension level.
 
 ---
 
@@ -303,7 +363,7 @@ row before each boss, escalating enemy HP per act, and +5% enemy HP per ascensio
 
 - **No code, no rebuild.** Difficulty curves, map size/shape, run length, and the ascension ladder
   are all just JSON. Edit, restart the server, start a new run.
-- **Make your own difficulty.** Tune `enemyHp`, `playerMaxHp`, `healPercentPerCombat`, and
+- **Make your own difficulty.** Tune `enemyLp`, `playerMaxLp`, `healPercentPerCombat`, and
   `interActHealPercent` for a casual or brutal run; layer `ascensionScale`/`perAscension` for a
   long-term challenge ladder.
 - **Shape the journey.** `bands`, `typeRules`, and `forcedRows` control where elites, rewards, and

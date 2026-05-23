@@ -35,6 +35,19 @@ namespace YgoMaster
             return files;
         }
 
+        // Resolve an encounter's `deck` filename to a full path under Roguelike/Opponents. Accepts an
+        // explicit extension; otherwise tries .json then .ydk. Null when nothing matches.
+        public static string ResolveOpponentDeck(string dataDirectory, string deckFile)
+        {
+            if (string.IsNullOrEmpty(deckFile)) return null;
+            string dir = Path.Combine(dataDirectory, "Roguelike", "Opponents");
+            string direct = Path.Combine(dir, deckFile);
+            if (File.Exists(direct)) return direct;
+            string json = direct + ".json"; if (File.Exists(json)) return json;
+            string ydk = direct + ".ydk"; if (File.Exists(ydk)) return ydk;
+            return null;
+        }
+
         public static StarterDeck LoadOne(string fullPath)
         {
             Dictionary<string, object> doc = MiniJSON.Json.DeserializeStripped(

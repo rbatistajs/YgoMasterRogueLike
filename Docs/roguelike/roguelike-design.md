@@ -408,7 +408,7 @@ O Goat fez algo assim (CpuContest/solo gates) mas não está neste clone; a base
 - No `Duel.end`, mandar `duel_result`; reabrir o mapa (ou Home se derrota).
 
 ### Fora do M4
-Booster/escolha de cartas (M5), editor do deck da run (M6), HP/gating boss e vitória da run
+Booster/escolha de cartas (M5), editor do deck da run (M6), LP/gating boss e vitória da run
 (M7), loja/eventos (M8). Reward = só moeda por enquanto.
 
 ### Pronto quando (M4)

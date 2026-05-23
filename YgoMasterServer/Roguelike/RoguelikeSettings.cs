@@ -34,7 +34,7 @@ namespace YgoMaster
         public static int Acts(Dictionary<string, object> s) => Math.Max(1, Utils.GetValue<int>(s, "acts", 3));
         public static int Ascensions(Dictionary<string, object> s) => Math.Max(1, Utils.GetValue<int>(s, "ascensions", 20));
 
-        // Heal applied (fraction of max HP) when starting each act after the first.
+        // Heal applied (fraction of max LP) when starting each act after the first.
         public static double InterActHealPercent(Dictionary<string, object> s)
         {
             object v;
@@ -80,7 +80,7 @@ namespace YgoMaster
         }
 
         // Multiplicative scaling: each scale entry `key: factor` -> value × (1 + factor·ascension).
-        // Applies to a top-level numeric, every numeric entry of a top-level dict (e.g. enemyHp), or
+        // Applies to a top-level numeric, every numeric entry of a top-level dict (e.g. enemyLp), or
         // a matching entry inside typeWeights (e.g. "elite").
         static void ApplyScale(Dictionary<string, object> eff, Dictionary<string, object> scale, int ascension)
         {
@@ -138,12 +138,12 @@ namespace YgoMaster
             return Utils.GetValue<Dictionary<string, object>>(s, "forcedRows") ?? new Dictionary<string, object>();
         }
 
-        // ----- combat HP -----
+        // ----- combat LP -----
 
-        // Player run HP: start value and cap (heals never exceed it).
-        public static int PlayerMaxHp(Dictionary<string, object> s) => Utils.GetValue<int>(s, "playerMaxHp", 8000);
+        // Player run LP: start value and cap (heals never exceed it).
+        public static int PlayerMaxLp(Dictionary<string, object> s) => Utils.GetValue<int>(s, "playerMaxLp", 8000);
 
-        // Heal applied after a won combat, as a fraction of PlayerMaxHp (default 10%).
+        // Heal applied after a won combat, as a fraction of PlayerMaxLp (default 10%).
         public static double HealPercent(Dictionary<string, object> s)
         {
             object v;
@@ -154,10 +154,10 @@ namespace YgoMaster
             return 0.10;
         }
 
-        // Enemy starting LP for a combat node: enemyHp[<type>] else enemyHp["default"] else 2000.
-        public static int EnemyHpFor(Dictionary<string, object> s, string type)
+        // Enemy starting LP for a combat node: enemyLp[<type>] else enemyLp["default"] else 2000.
+        public static int EnemyLpFor(Dictionary<string, object> s, string type)
         {
-            Dictionary<string, object> e = Utils.GetValue<Dictionary<string, object>>(s, "enemyHp");
+            Dictionary<string, object> e = Utils.GetValue<Dictionary<string, object>>(s, "enemyLp");
             int fallback = 2000;
             if (e != null)
             {
@@ -166,6 +166,25 @@ namespace YgoMaster
                 if (e.TryGetValue("default", out v)) { try { fallback = Convert.ToInt32(v); } catch { } }
             }
             return fallback;
+        }
+
+        // ----- CPU AI -----
+
+        // AI strength (-100..100; default 100 = max). Fallback for encounters without `cpuRate`.
+        public static int CpuRate(Dictionary<string, object> s) => Utils.GetValue<int>(s, "cpuRate", 100);
+
+        // AI behavior flag (DuelCpuParam name: None/Def/Fool/Light/MyTurnOnly/AttackOnly/Simple;
+        // null = None). Fallback for encounters without `cpuFlag`.
+        public static string CpuFlag(Dictionary<string, object> s) => Utils.GetValue<string>(s, "cpuFlag", null);
+
+        // ----- modifiers -----
+
+        // Per-node-type modifier defaults: modifierDefaults[<type>] = { player, enemy }. Merged under
+        // the encounter's own modifiers; null when absent. Scales via perAct/perAscension (Effective).
+        public static Dictionary<string, object> ModifierDefaults(Dictionary<string, object> s, string type)
+        {
+            Dictionary<string, object> all = Utils.GetValue<Dictionary<string, object>>(s, "modifierDefaults");
+            return all != null ? Utils.GetValue<Dictionary<string, object>>(all, type) : null;
         }
     }
 }

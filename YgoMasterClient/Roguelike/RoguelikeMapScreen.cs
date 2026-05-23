@@ -17,8 +17,10 @@ namespace YgoMasterClient
         const string DeckGroup = Ui + ".MainArea.DeckArea.DeckGroup";
         const string ScrollView = DeckGroup + ".Scroll View2";
         const string DeckContent = ScrollView + ".Viewport.Content";
-        const string HeaderArea = Ui + ".TitleSafeArea.HeaderButtonArea"; // deck count / filter / etc.
-        const string HeaderName = Ui + ".TitleSafeArea.HeaderButtonArea.HeaderButtonGroup.NameText"; // cloned for HP
+        const string HeaderArea = Ui + ".TitleSafeArea.HeaderButtonArea";
+        const string HeaderGroup = HeaderArea + ".HeaderButtonGroup";      // kept visible; we reuse its texts
+        const string HeaderName = HeaderGroup + ".NameText";               // title (left); also the boss-label TMP template
+        const string HeaderLp = HeaderGroup + ".DeckNum.TextDeckNumValue"; // repurposed "0/999" slot -> run LP (right)
         const string RgScrollViewPath = DeckGroup + ".RgScrollView";
         const string RgMapPath = RgScrollViewPath + ".RgViewport.RgMap";
 
@@ -51,8 +53,8 @@ namespace YgoMasterClient
         static IntPtr _go;       // the current map VC GameObject (for in-place refresh)
         static IL2Method _activeInHierarchy; // GameObject.activeInHierarchy getter (refresh gate)
         static bool _refreshPending;         // refresh once the map is on-screen again (post-duel)
-        static IntPtr _tmpType;  // ExtendedTextMeshProUGUI (HP label text)
-        static IntPtr _hpLabel;  // cloned NameText showing "HP cur/max", updated each render
+        static IntPtr _tmpType;  // ExtendedTextMeshProUGUI (LP label text)
+        static IntPtr _bossLabelSrc; // NameText TMP cloned as the per-node (boss) name-label template
         static IntPtr _extScroll; // our RgScrollView's ExtendedScrollRect (identity for the Start hook)
         static IntPtr _markerSource; // cached PlayerIcon clone (Home is inactive once a run is open)
         static bool _ready;
@@ -287,8 +289,13 @@ namespace YgoMasterClient
             IntPtr deckGroup = GameObject.FindGameObjectByPath(go, DeckGroup);
             if (deckGroup == IntPtr.Zero) { Console.WriteLine("[Roguelike] map: DeckGroup not found"); return; }
 
+            // Reuse the header's own texts: NameText = title, the "0/999" slot = run LP (both filled
+            // by RenderMap -> SetLpText). Capture NameText as the boss-label TMP template, then hide
+            // the deck-management clutter we don't need on the map.
+            _bossLabelSrc = GameObject.FindGameObjectByPath(go, HeaderName);
+            HideHeaderClutter(go);
+
             Hide(go, ScrollView);   // hide the game's scroll (its InfinityScroll resized our content)
-            Hide(go, HeaderArea);   // hide deck count / filter / search clutter (irrelevant on the map)
 
             // RgScrollView (fills DeckGroup) + ScrollRect.
             IntPtr sv = GameObject.New();
@@ -339,43 +346,66 @@ namespace YgoMasterClient
             if (_extDragScrollEnabled != null) { csbool drag = true; _extDragScrollEnabled.SetValue(srComp, new IntPtr(&drag)); }
             else Console.WriteLine("[Roguelike] map: ExtendedScrollRect.dragScrollEnabled field not found");
 
-            SetupHpLabel(go, deckGroup);
             RenderMap(template, ct, srComp, deckGroup);
         }
 
-        // HP indicator: the run header is hidden on the map, so clone its NameText (a styled TMP)
-        // into the DeckGroup, pinned top-left. RenderMap fills the text each render.
-        static void SetupHpLabel(IntPtr go, IntPtr deckGroup)
+        // Header bits irrelevant to the map: the extra counters, search/filter and deck-management
+        // buttons. We keep NameText (title) and DeckNum (its value text repurposed for LP).
+        static readonly string[] HeaderClutter =
         {
-            IntPtr existing = GameObject.FindGameObjectByName(deckGroup, "RgHpLabel");
-            if (existing != IntPtr.Zero) UnityObject.Destroy(existing); // avoid dupes on SetupMap re-run
-            IntPtr nameText = GameObject.FindGameObjectByPath(go, HeaderName);
-            if (nameText == IntPtr.Zero) { _hpLabel = IntPtr.Zero; Console.WriteLine("[Roguelike] map: NameText not found for HP label"); return; }
-            IntPtr label = UnityObject.Instantiate(nameText);
-            UnityObject.SetName(label, "RgHpLabel");
-            IntPtr lt = GameObject.GetTransform(label);
-            Transform.SetParent(lt, GameObject.GetTransform(deckGroup));
-            SetVec(lt, _anchorMin, new AssetHelper.Vector2(0, 1));
-            SetVec(lt, _anchorMax, new AssetHelper.Vector2(0, 1));
-            SetVec(lt, _pivot, new AssetHelper.Vector2(0, 1));
-            Vector3 pos = new Vector3(28, -12, 0);
-            _anchoredPos3D.GetSetMethod().Invoke(lt, new IntPtr[] { new IntPtr(&pos) });
-            Transform.SetLocalScale(lt, new Vector3(1, 1, 1));
-            GameObject.SetActive(label, true);
-            _hpLabel = label;
+            "TextSub", "TournamentDeckNum", "NeuronDeckNum", "ButtonPickupCard",
+            "BulkDecksDeletionButton", "ButtonStructureDeckView", "ExtendedInputField",
+            "ButtonFilter", "ButtonTrashSub", "ButtonTrash", "ButtonCaution",
+            "ButtonPageUp", "ButtonPageDown", "ButtonOpenNeuronDecks",
+        };
+
+        static void HideHeaderClutter(IntPtr go)
+        {
+            foreach (string name in HeaderClutter) Hide(go, HeaderGroup + "." + name);
+            Hide(go, HeaderGroup + ".DeckNum.IconDeckNum"); // drop the deck icon; keep just the LP text
+            IntPtr deckNum = GameObject.FindGameObjectByPath(go, HeaderGroup + ".DeckNum");
+            if (deckNum != IntPtr.Zero) GameObject.SetActive(deckNum, true); // ensure the LP slot shows
         }
 
-        static void SetHpText()
+        // Fill the reused header texts each render: NameText = title (act/asc), the "0/999" slot = LP.
+        static void SetLpText()
         {
-            if (_hpLabel == IntPtr.Zero || _tmpType == IntPtr.Zero) return;
-            IntPtr tmp = GameObject.GetComponent(_hpLabel, _tmpType);
-            if (tmp == IntPtr.Zero) return;
+            if (_go == IntPtr.Zero || _tmpType == IntPtr.Zero) return;
             int acts = RoguelikeApi.Acts(); if (acts < 1) acts = 1;
-            string txt = "Ato " + (RoguelikeApi.Act() + 1) + "/" + acts +
-                "    HP " + RoguelikeApi.Hp() + " / " + RoguelikeApi.MaxHp();
             int asc = RoguelikeApi.Ascension();
-            if (asc > 0) txt += "    Asc " + asc;
-            TMPro.TMP_Text.SetText(tmp, txt);
+            string title = "Mapa da Run   ·   Ato " + (RoguelikeApi.Act() + 1) + "/" + acts;
+            if (asc > 0) title += "   ·   Asc " + asc;
+            SetTmpText(HeaderName, title);
+            SetTmpText(HeaderLp, "LP " + RoguelikeApi.Lp() + " / " + RoguelikeApi.MaxLp());
+        }
+
+        static void SetTmpText(string path, string text)
+        {
+            IntPtr o = GameObject.FindGameObjectByPath(_go, path);
+            if (o == IntPtr.Zero) return;
+            IntPtr tmp = GameObject.GetComponent(o, _tmpType);
+            if (tmp != IntPtr.Zero) TMPro.TMP_Text.SetText(tmp, text);
+        }
+
+        // Show a baked encounter name (boss) as a small label under its node. Cloned from the
+        // header NameText so it inherits the themed TMP style; re-created with the node each render.
+        static void AddBossLabel(IntPtr node, string name)
+        {
+            if (_bossLabelSrc == IntPtr.Zero || _tmpType == IntPtr.Zero || string.IsNullOrEmpty(name)) return;
+            IntPtr label = UnityObject.Instantiate(_bossLabelSrc, GameObject.GetTransform(node));
+            UnityObject.SetName(label, "RgNodeName");
+            IntPtr lt = GameObject.GetTransform(label);
+            SetVec(lt, _anchorMin, new AssetHelper.Vector2(0.5f, 0));
+            SetVec(lt, _anchorMax, new AssetHelper.Vector2(0.5f, 0));
+            SetVec(lt, _pivot, new AssetHelper.Vector2(0.5f, 1)); // pivot top -> hangs below the node
+            SetVec(lt, _sizeDelta, new AssetHelper.Vector2(240, 0));
+            Vector3 p = new Vector3(0, -8, 0);
+            _anchoredPos3D.GetSetMethod().Invoke(lt, new IntPtr[] { new IntPtr(&p) });
+            Transform.SetLocalScale(lt, new Vector3(0.8f, 0.8f, 0.8f));
+            GameObject.SetActive(label, true);
+            Transform.SetAsLastSibling(lt);
+            IntPtr tmp = GameObject.GetComponent(label, _tmpType);
+            if (tmp != IntPtr.Zero) TMPro.TMP_Text.SetText(tmp, name);
         }
 
         // (Re)build the nodes/edges/marker inside RgMap from the current run state and scroll to the
@@ -420,6 +450,7 @@ namespace YgoMasterClient
                     slot++;
                 }
                 StyleNode(node, n.Type, isOpen, isVisited, isCurrent);
+                if (!string.IsNullOrEmpty(n.Name)) AddBossLabel(node, n.Name);
             }
 
             // First build creates the marker at the spot; later renders keep it and animate it over.
@@ -434,7 +465,7 @@ namespace YgoMasterClient
             _hasScrollTarget = vh > 0;
             ApplyScroll(srComp); // re-applied from the Start hook on first build (post Initialize)
 
-            SetHpText();
+            SetLpText();
         }
 
         // Looping ping-pong scale on the choosable (reachable) nodes so the next moves stand out.

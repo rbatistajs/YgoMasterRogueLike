@@ -169,6 +169,7 @@ namespace YgoMasterClient
         {
             public int Id, Row, Col;
             public string Type = "duel";
+            public string Name = "";   // baked encounter display name (boss only)
             public List<int> Next = new List<int>();
         }
 
@@ -214,6 +215,7 @@ namespace YgoMasterClient
                         Type = d.ContainsKey("type") ? Convert.ToString(d["type"]) : "duel",
                         Row = d.ContainsKey("row") ? Convert.ToInt32(d["row"]) : 0,
                         Col = d.ContainsKey("col") ? Convert.ToInt32(d["col"]) : 0,
+                        Name = d.ContainsKey("name") ? Convert.ToString(d["name"]) : "",
                     };
                     List<object> next = d.ContainsKey("next") ? d["next"] as List<object> : null;
                     if (next != null) foreach (object v in next) { try { n.Next.Add(Convert.ToInt32(v)); } catch { } }
@@ -239,7 +241,7 @@ namespace YgoMasterClient
         }
 
         // Report a finished combat duel: win/loss + the player's remaining LP. Server carries the LP
-        // into run HP (win, + heal) or ends the run (loss).
+        // into run LP (win, + heal) or ends the run (loss).
         public static void SendDuelResult(bool win, int playerLp)
         {
             Call("Roguelike.duel_result", new Dictionary<string, object> { { "win", win }, { "playerLp", playerLp } });
@@ -248,8 +250,8 @@ namespace YgoMasterClient
         // Re-fetch the pending combat duel (same seed) so the client can relaunch an unfinished one.
         public static void ResumeDuel() { Call("Roguelike.resume_duel"); }
 
-        // Current run HP / cap (for the map HP indicator).
-        public static int Hp() { return YgomSystem.Utility.ClientWork.GetByJsonPath<int>("Roguelike.hp"); }
-        public static int MaxHp() { return YgomSystem.Utility.ClientWork.GetByJsonPath<int>("Roguelike.maxHp"); }
+        // Current run LP / cap (for the map LP indicator).
+        public static int Lp() { return YgomSystem.Utility.ClientWork.GetByJsonPath<int>("Roguelike.lp"); }
+        public static int MaxLp() { return YgomSystem.Utility.ClientWork.GetByJsonPath<int>("Roguelike.maxLp"); }
     }
 }

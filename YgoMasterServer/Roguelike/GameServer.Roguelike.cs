@@ -149,12 +149,11 @@ namespace YgoMaster
                             run.Act = 0;
                             Dictionary<string, object> eff = RoguelikeSettings.Effective(
                                 RoguelikeSettings.Load(dataDirectory), run.Act, run.Ascension);
-                            RoguelikeMapLayout layout = RoguelikeMapLayout.Create(RoguelikeSettings.Layout(eff));
-                            run.Map = layout.Build(ActSeed(run.Seed, run.Act), eff).ToDictionary();
+                            run.Map = BuildActMap(run, eff);
                             run.Position = -1;
                             run.Visited = new List<object>();
-                            run.MaxHp = RoguelikeSettings.PlayerMaxHp(eff);
-                            run.Hp = run.MaxHp; // start the run at full HP
+                            run.MaxLp = RoguelikeSettings.PlayerMaxLp(eff);
+                            run.Lp = run.MaxLp; // start the run at full LP
                             run.Save(GetPlayerDirectory(request.Player));
                         }
                     }
@@ -195,9 +194,9 @@ namespace YgoMaster
             WriteRun(request, run);
         }
 
-        // Win: carry remaining LP into run HP (+ combat heal), credit currency. Boss win advances to
+        // Win: carry remaining LP into run LP (+ combat heal), credit currency. Boss win advances to
         // the next act (regenerate map, inter-act heal) or, on the final act, wins the run and unlocks
-        // the next ascension. Loss: HP hits 0, run ends. Clears the pending duel either way.
+        // the next ascension. Loss: LP hits 0, run ends. Clears the pending duel either way.
         void Act_RoguelikeDuelResult(GameServerWebRequest request)
         {
             string dir = GetPlayerDirectory(request.Player);
@@ -208,20 +207,22 @@ namespace YgoMaster
             {
                 Dictionary<string, object> baseS = RoguelikeSettings.Load(dataDirectory);
                 Dictionary<string, object> eff = RoguelikeSettings.Effective(baseS, run.Act, run.Ascension);
-                if (run.MaxHp <= 0) run.MaxHp = RoguelikeSettings.PlayerMaxHp(eff); // lazy init (old saves)
+                if (run.MaxLp <= 0) run.MaxLp = RoguelikeSettings.PlayerMaxLp(eff); // lazy init (old saves)
                 string nodeType = NodeType(run, run.PendingDuelNode);
+                RoguelikeEncounters.Encounter enc = RoguelikeEncounters.ById(dataDirectory, run.PendingEncounterId);
                 run.PendingDuelNode = -1;
+                run.PendingEncounterId = "";
                 if (win)
                 {
-                    int heal = (int)(run.MaxHp * RoguelikeSettings.HealPercent(eff));
-                    run.Hp = Math.Min(run.MaxHp, Math.Max(0, playerLp) + heal);
-                    run.Currency += RewardFor(nodeType);
-                    if (run.Hp <= 0) run.Active = false; // safety: a 0-HP "win" is still death
+                    int heal = (int)(run.MaxLp * RoguelikeSettings.HealPercent(eff));
+                    run.Lp = Math.Min(run.MaxLp, Math.Max(0, playerLp) + heal);
+                    run.Currency += (enc != null && enc.Reward.HasValue) ? enc.Reward.Value : RewardFor(nodeType);
+                    if (run.Lp <= 0) run.Active = false; // safety: a 0-LP "win" is still death
                     else if (nodeType == "boss") AdvanceActOrWin(run, baseS, dir);
                 }
                 else
                 {
-                    run.Hp = 0;
+                    run.Lp = 0;
                     run.Active = false;
                 }
                 run.Save(dir);
@@ -236,12 +237,11 @@ namespace YgoMaster
             {
                 run.Act++;
                 Dictionary<string, object> next = RoguelikeSettings.Effective(baseS, run.Act, run.Ascension);
-                RoguelikeMapLayout layout = RoguelikeMapLayout.Create(RoguelikeSettings.Layout(next));
-                run.Map = layout.Build(ActSeed(run.Seed, run.Act), next).ToDictionary();
+                run.Map = BuildActMap(run, next);
                 run.Position = -1;
                 run.Visited = new List<object>();
-                int interHeal = (int)(run.MaxHp * RoguelikeSettings.InterActHealPercent(next));
-                run.Hp = Math.Min(run.MaxHp, run.Hp + interHeal);
+                int interHeal = (int)(run.MaxLp * RoguelikeSettings.InterActHealPercent(next));
+                run.Lp = Math.Min(run.MaxLp, run.Lp + interHeal);
             }
             else
             {
@@ -259,6 +259,34 @@ namespace YgoMaster
             unchecked { return (int)((uint)(runSeed * 31) ^ (uint)(act * 2654435761)); }
         }
 
+        // Build the act map and bake the boss encounter onto its node, so the map can name the boss
+        // ahead of the fight. duel/elite nodes pick their encounter lazily at arrival instead.
+        Dictionary<string, object> BuildActMap(RoguelikeRun run, Dictionary<string, object> eff)
+        {
+            RoguelikeMapLayout layout = RoguelikeMapLayout.Create(RoguelikeSettings.Layout(eff));
+            RoguelikeMap map = layout.Build(ActSeed(run.Seed, run.Act), eff);
+            BakeBossEncounter(run, map);
+            return map.ToDictionary();
+        }
+
+        // Pick a boss encounter (seeded by the boss node) and store its id + display name on the node.
+        void BakeBossEncounter(RoguelikeRun run, RoguelikeMap map)
+        {
+            MapNode boss = null;
+            foreach (MapNode n in map.Nodes) if (n.Type == "boss") { boss = n; break; }
+            if (boss == null) return;
+            Random rng = new Random(DuelRngSeed(run.Seed, run.Act, boss.Id));
+            RoguelikeEncounters.Encounter e = RoguelikeEncounters.Pick(
+                dataDirectory, "boss", run.Act, boss.Row, run.Ascension, rng);
+            if (e == null)
+            {
+                Console.WriteLine("[Roguelike] no boss encounter for act " + run.Act + " asc " + run.Ascension);
+                return;
+            }
+            boss.Encounter = e.Id;
+            boss.Name = e.Name;
+        }
+
         static bool IsCombat(string type) => type == "duel" || type == "elite" || type == "boss";
 
         static int RewardFor(string type)
@@ -266,17 +294,34 @@ namespace YgoMaster
             switch (type) { case "boss": return 1000; case "elite": return 250; default: return 100; }
         }
 
-        static string NodeType(RoguelikeRun run, int id)
+        static Dictionary<string, object> FindNode(RoguelikeRun run, int id)
         {
             List<object> nodes = run.Map != null ? Utils.GetValue<List<object>>(run.Map, "nodes") : null;
-            if (nodes == null) return "";
+            if (nodes == null) return null;
             foreach (object o in nodes)
             {
                 Dictionary<string, object> n = o as Dictionary<string, object>;
-                if (n != null && Utils.GetValue<int>(n, "id", -999) == id)
-                    return Utils.GetValue<string>(n, "type", "");
+                if (n != null && Utils.GetValue<int>(n, "id", -999) == id) return n;
             }
-            return "";
+            return null;
+        }
+
+        static string NodeType(RoguelikeRun run, int id)
+        {
+            Dictionary<string, object> n = FindNode(run, id);
+            return n != null ? Utils.GetValue<string>(n, "type", "") : "";
+        }
+
+        static int NodeRow(RoguelikeRun run, int id)
+        {
+            Dictionary<string, object> n = FindNode(run, id);
+            return n != null ? Utils.GetValue<int>(n, "row", -1) : -1;
+        }
+
+        static string NodeEncounter(RoguelikeRun run, int id)
+        {
+            Dictionary<string, object> n = FindNode(run, id);
+            return n != null ? Utils.GetValue<string>(n, "encounter", "") : "";
         }
 
         // Build a custom duel (run deck vs opponent) for a combat node and put it in Response["Duel"]
@@ -291,40 +336,61 @@ namespace YgoMaster
             player.FromDictionary(deckDict, false);
             player.Name = Utils.GetValue<string>(run.Deck, "name", "Run Deck");
 
-            List<string> opps = RoguelikeDeckPool.ListOpponentFiles(dataDirectory);
-            if (opps.Count == 0) { Console.WriteLine("[Roguelike] no opponents in Roguelike/Opponents"); return false; }
-            opps.Sort(StringComparer.Ordinal); // stable order so the seeded pick is reproducible
-
+            string nodeType = NodeType(run, nodeId);
+            int floor = NodeRow(run, nodeId);
             Random duelRng = new Random(DuelRngSeed(run.Seed, run.Act, nodeId));
-            string oppFile = opps[duelRng.Next(opps.Count)];
+
+            // Boss encounter is baked on the node at map-gen; duel/elite are picked here (lazy). The
+            // pick is the first RNG draw, so a resumed duel re-derives the same enemy and draws.
+            RoguelikeEncounters.Encounter enc = nodeType == "boss"
+                ? RoguelikeEncounters.ById(dataDirectory, NodeEncounter(run, nodeId))
+                : RoguelikeEncounters.Pick(dataDirectory, nodeType, run.Act, floor, run.Ascension, duelRng);
+            if (enc == null)
+            {
+                Console.WriteLine("[Roguelike] no encounter for type " + nodeType + " act " + run.Act +
+                    " floor " + floor + " asc " + run.Ascension);
+                return false;
+            }
+
+            string oppFile = RoguelikeDeckPool.ResolveOpponentDeck(dataDirectory, enc.Deck);
+            if (oppFile == null) { Console.WriteLine("[Roguelike] encounter deck not found: " + enc.Deck); return false; }
             DeckInfo opp = new DeckInfo();
             opp.File = oppFile;
             opp.Load();
-            if (string.IsNullOrEmpty(opp.Name)) opp.Name = System.IO.Path.GetFileNameWithoutExtension(oppFile);
+            opp.Name = !string.IsNullOrEmpty(enc.Name) ? enc.Name : System.IO.Path.GetFileNameWithoutExtension(oppFile);
 
             DuelSettings ds = new DuelSettings();
             ds.Deck[DuelSettings.PlayerIndex] = player;
             ds.Deck[DuelSettings.CpuIndex] = opp;
             ds.IsCustomDuel = true;
             ds.SetRequiredDefaults();
-            // Starting LP: player = current run HP, enemy = per-type config (set after defaults so
-            // they aren't zeroed; non-zero so they survive serialization and the engine's defaulting).
-            Dictionary<string, object> hpSettings = RoguelikeSettings.Effective(
+            // Starting LP: player = current run LP, enemy = encounter override else per-type config
+            // (set after defaults so they aren't zeroed; non-zero so they survive the engine's defaulting).
+            Dictionary<string, object> lpSettings = RoguelikeSettings.Effective(
                 RoguelikeSettings.Load(dataDirectory), run.Act, run.Ascension);
-            if (run.MaxHp <= 0) run.MaxHp = RoguelikeSettings.PlayerMaxHp(hpSettings); // lazy init (old saves)
-            int playerLife = run.Hp > 0 ? run.Hp : run.MaxHp;
+            if (run.MaxLp <= 0) run.MaxLp = RoguelikeSettings.PlayerMaxLp(lpSettings); // lazy init (old saves)
+            int playerLife = run.Lp > 0 ? run.Lp : run.MaxLp;
             ds.life[DuelSettings.PlayerIndex] = playerLife;
-            ds.life[DuelSettings.CpuIndex] = RoguelikeSettings.EnemyHpFor(hpSettings, NodeType(run, nodeId));
+            ds.life[DuelSettings.CpuIndex] = enc.EnemyLp ?? RoguelikeSettings.EnemyLpFor(lpSettings, nodeType);
             ds.chapter = 0;
-            ds.FirstPlayer = duelRng.Next(2);
+            ds.FirstPlayer = enc.FirstPlayer ?? duelRng.Next(2);
+            ds.cpu = enc.CpuRate ?? RoguelikeSettings.CpuRate(lpSettings);     // AI strength (default 100 = max)
+            ds.cpuflag = enc.CpuFlag ?? RoguelikeSettings.CpuFlag(lpSettings); // AI behavior flag (default None)
             // Engine RNG seed (shuffle/draws/dice). Must be nonzero so Act_DuelBegin keeps it
             // instead of randomizing; deterministic so a resumed duel deals the same cards.
             ds.RandSeed = (uint)duelRng.Next(1, int.MaxValue);
-            // $.Duel drives the production visuals (cosmetics only). The full settings ride along
-            // as duelStarterData so the client can forward them in Duel.begin — there's no chapter
-            // for the server to build from, so the custom-duel path is the only way in.
+
+            run.PendingEncounterId = enc.Id; // for the reward lookup at duel_result
+            // Full settings ride along as duelStarterData so the client forwards them in Duel.begin —
+            // there's no chapter for the server to build from. Modifiers (per-type defaults +
+            // encounter) compile into cmds (starting board) and LP/hand deltas on top of the base.
+            Dictionary<string, object> starter = ds.ToDictionary();
+            string duelType = ds.Type == 4 ? "Rush" : "Normal";
+            RoguelikeModifiers.Apply(starter, duelType,
+                RoguelikeSettings.ModifierDefaults(lpSettings, nodeType), enc.Modifiers);
+            // $.Duel drives the production visuals (cosmetics only).
             Dictionary<string, object> duelDto = ds.ToDictionaryForSoloStart();
-            duelDto["duelStarterData"] = ds.ToDictionary();
+            duelDto["duelStarterData"] = starter;
             request.Response["Duel"] = duelDto;
             return true;
         }

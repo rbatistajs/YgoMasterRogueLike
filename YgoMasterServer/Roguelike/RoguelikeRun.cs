@@ -19,8 +19,9 @@ namespace YgoMaster
         public List<object> Visited;               // ids already walked
         public int Currency;                        // run currency, credited on duel win
         public int PendingDuelNode = -1;            // combat node whose duel is in progress (-1 = none)
-        public int Hp;                              // current run HP (= player's starting LP each duel)
-        public int MaxHp;                           // HP cap (snapshot of playerMaxHp at run start)
+        public string PendingEncounterId = "";      // encounter chosen for the in-progress duel (reward lookup)
+        public int Lp;                              // current run LP (= player's starting LP each duel)
+        public int MaxLp;                           // LP cap (snapshot of playerMaxLp at run start)
         public int Act;                             // current act (0-based)
         public int Ascension;                       // ascension tier this run is played at
         public bool Won;                            // set when the final act's boss falls
@@ -39,8 +40,9 @@ namespace YgoMaster
                 { "visited", Visited ?? new List<object>() },
                 { "currency", Currency },
                 { "pendingDuelNode", PendingDuelNode },
-                { "hp", Hp },
-                { "maxHp", MaxHp },
+                { "pendingEncounterId", PendingEncounterId ?? "" },
+                { "lp", Lp },
+                { "maxLp", MaxLp },
                 { "act", Act },
                 { "ascension", Ascension },
                 { "won", Won },
@@ -65,8 +67,9 @@ namespace YgoMaster
                 Visited    = Utils.GetValue<List<object>>(d, "visited"),
                 Currency   = Utils.GetValue<int>(d, "currency", 0),
                 PendingDuelNode = Utils.GetValue<int>(d, "pendingDuelNode", -1),
-                Hp         = Utils.GetValue<int>(d, "hp", 0),
-                MaxHp      = Utils.GetValue<int>(d, "maxHp", 0),
+                PendingEncounterId = Utils.GetValue<string>(d, "pendingEncounterId", ""),
+                Lp         = Utils.GetValue<int>(d, "lp", Utils.GetValue<int>(d, "hp", 0)),    // hp = legacy key
+                MaxLp      = Utils.GetValue<int>(d, "maxLp", Utils.GetValue<int>(d, "maxHp", 0)),
                 Act        = Utils.GetValue<int>(d, "act", 0),
                 Ascension  = Utils.GetValue<int>(d, "ascension", 0),
                 Won        = Utils.GetValue<bool>(d, "won", false),
