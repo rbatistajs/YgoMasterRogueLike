@@ -33,6 +33,7 @@ namespace YgoMaster
             public int? CpuRate;    // AI strength -100..100 (default = Settings, 100 = max)
             public string CpuFlag;  // DuelCpuParam name (None/Def/Fool/Light/...); null = Settings default
             public Dictionary<string, object> Modifiers; // { player, enemy } board spec (RoguelikeModifiers)
+            public Dictionary<string, object> Action;    // action tree fired after this encounter (null = none)
         }
 
         static Dictionary<string, List<Encounter>> _cache;
@@ -88,6 +89,7 @@ namespace YgoMaster
                 CpuRate = OptInt(d, "cpuRate"),
                 CpuFlag = ValidCpuFlag(Utils.GetValue<string>(d, "cpuFlag", null), id),
                 Modifiers = Utils.GetValue<Dictionary<string, object>>(d, "modifiers"),
+                Action = Utils.GetValue<Dictionary<string, object>>(d, "action"),
             };
             object w; if (d.TryGetValue("weight", out w)) { try { e.Weight = Convert.ToDouble(w); } catch { } }
             if (string.IsNullOrEmpty(e.Name)) e.Name = Path.GetFileNameWithoutExtension(deck);

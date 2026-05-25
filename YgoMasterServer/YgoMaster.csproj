@@ -149,6 +149,7 @@
     <Compile Include="Roguelike\RoguelikeTypePolicy.cs" />
     <Compile Include="Roguelike\SlayTheSpireLayout.cs" />
     <Compile Include="Roguelike\GameServer.Roguelike.cs" />
+    <Compile Include="Roguelike\Actions\RoguelikeActionEngine.cs" />
   </ItemGroup>
   <ItemGroup>
     <None Include="app.config" />

@@ -502,6 +502,12 @@ namespace YgoMaster
                                     case "Roguelike.resume_duel":
                                         Act_RoguelikeResumeDuel(gameServerWebRequest);
                                         break;
+                                    case "Roguelike.encounter_action":
+                                        Act_RoguelikeEncounterAction(gameServerWebRequest);
+                                        break;
+                                    case "Roguelike.action_respond":
+                                        Act_RoguelikeActionRespond(gameServerWebRequest);
+                                        break;
                                     default:
                                         Utils.LogInfo("Unhandled act " + actsHeader);
                                         Debug.WriteLine("Unhandled act " + actsHeader + " " + MiniJSON.Json.Serialize(vals));

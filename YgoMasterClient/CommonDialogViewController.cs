@@ -19,7 +19,6 @@ namespace YgomGame.Menu
         static IL2Method methodOpenNoticeYesNoDialog;
         static IL2Method methodOpenItemConfirmDialog1;
         static IL2Method methodOpenItemConfirmDialog2;
-        static IL2Method methodOpenCheckBoxDialog;
 
         static CommonDialogViewController()
         {
@@ -35,7 +34,6 @@ namespace YgomGame.Menu
             methodOpenNoticeYesNoDialog = classInfo.GetMethod("OpenNoticeYesNoDialog");
             methodOpenItemConfirmDialog1 = classInfo.GetMethod("OpenItemConfirmDialog", x => x.GetParameters().FirstOrDefault(y => y.Name == "isPeriod") == null);
             methodOpenItemConfirmDialog2 = classInfo.GetMethod("OpenItemConfirmDialog", x => x.GetParameters().FirstOrDefault(y => y.Name == "isPeriod") != null);
-            methodOpenCheckBoxDialog = classInfo.GetMethod("OpenCheckBoxDialog");
         }
 
         static IntPtr GetArgsPtr(Dictionary<string, object> args)
@@ -240,26 +238,6 @@ namespace YgomGame.Menu
                 new IL2String(buttonLabel).ptr, new IL2String(itemMessage).ptr, GetArgsPtr(args),
             });
         }
-
-        // TODO
-        /*public static void OpenCheckBoxDialog(
-            string title,
-            string message,
-            List<EntryCheckBoxListData.EntryCheckBoxData> checkBoxList,
-            bool isEnableMulti,
-            Action<List<bool>> action,
-            Action noAction,
-            string buttonLabel,
-            string noButtonLabel,
-            bool interactable = false,
-            CommonDialogTitleWidget.IconType iconType = CommonDialogTitleWidget.IconType.None,
-            Dictionary<string, object> args)
-        {
-            methodOpenCheckBoxDialog.Invoke(new IntPtr[]
-            {
-                ...
-            });
-        }*/
     }
 }
 

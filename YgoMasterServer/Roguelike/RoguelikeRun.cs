@@ -26,6 +26,8 @@ namespace YgoMaster
         public int Act;                             // current act (0-based)
         public int Ascension;                       // ascension tier this run is played at
         public bool Won;                            // set when the final act's boss falls
+        public Dictionary<string, object> PendingAction; // current action-tree node awaiting resolution, or null
+        public int ActionToken;                     // bumps each time a new prompt is presented (client dedup)
 
         public Dictionary<string, object> ToDictionary()
         {
@@ -48,6 +50,8 @@ namespace YgoMaster
                 { "act", Act },
                 { "ascension", Ascension },
                 { "won", Won },
+                { "pendingAction", PendingAction },
+                { "actionToken", ActionToken },
             };
         }
 
@@ -76,6 +80,8 @@ namespace YgoMaster
                 Act        = Utils.GetValue<int>(d, "act", 0),
                 Ascension  = Utils.GetValue<int>(d, "ascension", 0),
                 Won        = Utils.GetValue<bool>(d, "won", false),
+                PendingAction = Utils.GetValue<Dictionary<string, object>>(d, "pendingAction"),
+                ActionToken   = Utils.GetValue<int>(d, "actionToken", 0),
             };
         }
 

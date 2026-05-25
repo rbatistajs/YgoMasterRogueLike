@@ -410,8 +410,9 @@ namespace YgoMasterClient
     // Renders the server's current action prompt ($.Roguelike.action) and sends the player's
     // choice back. Driven by RoguelikeFlow.OnNetworkComplete (called after every roguelike
     // response), so the prompt -> choice -> next-prompt loop self-advances. Token dedup keeps
-    // a given prompt from re-opening. v1 limitation: cancelling an options sheet leaves the
-    // action pending until the next server response (acceptable for v1 'options' events).
+    // a given prompt from re-opening. Options sheets are non-cancelable: ActionSheetViewController.OnCancel
+    // (fired by the CANCEL button AND the full-screen tap-outside button) is hooked and swallowed while
+    // an "options" action prompt is pending, so the player must pick an option.
     static class RoguelikeActionDriver
     {
         static int _shownToken = -1;
@@ -512,4 +513,5 @@ case "rgencounter":// dev: run encounter <id>'s action through the real engine
 If any step fails, debug to root cause before continuing (systematic-debugging):
 ActionSheet not opening → check `$.Roguelike.action` is present (server projection)
 and that `OnNetworkComplete` runs `Pump()`; wrong/blank labels → check `Project`
-reads `option.label`; soft-lock after cancel → known v1 limitation (Task 8 note).
+reads `option.label`; cancel/tap-outside is suppressed via the OnCancel hook while an
+options prompt is pending (no soft-lock).

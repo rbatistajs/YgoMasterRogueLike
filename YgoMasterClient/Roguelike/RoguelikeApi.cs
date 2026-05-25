@@ -239,6 +239,56 @@ namespace YgoMasterClient
             Call("Roguelike.move", new Dictionary<string, object> { { "nodeId", nodeId } });
         }
 
+        // ----- actions (M5) -----
+
+        public class ActionPrompt
+        {
+            public int Token;
+            public string Type;      // "options" | "message"
+            public string Title;     // header
+            public string Message;   // body
+            public string[] Options; // option labels (empty for message)
+        }
+
+        // Current server action prompt ($.Roguelike.action), or null when nothing is pending.
+        public static ActionPrompt GetActionPrompt()
+        {
+            try
+            {
+                string json = YgomSystem.Utility.ClientWork.SerializePath("Roguelike.action");
+                if (string.IsNullOrEmpty(json)) return null;
+                Dictionary<string, object> d = MiniJSON.Json.Deserialize(json) as Dictionary<string, object>;
+                if (d == null) return null;
+                ActionPrompt p = new ActionPrompt
+                {
+                    Token = d.ContainsKey("token") ? Convert.ToInt32(d["token"]) : 0,
+                    Type = d.ContainsKey("type") ? Convert.ToString(d["type"]) : "",
+                    Title = d.ContainsKey("title") ? Convert.ToString(d["title"]) : "",
+                    Message = d.ContainsKey("message") ? Convert.ToString(d["message"]) : "",
+                };
+                List<object> opts = d.ContainsKey("options") ? d["options"] as List<object> : null;
+                if (opts != null)
+                {
+                    p.Options = new string[opts.Count];
+                    for (int i = 0; i < opts.Count; i++) p.Options[i] = Convert.ToString(opts[i]);
+                }
+                else p.Options = new string[0];
+                return p;
+            }
+            catch (Exception ex) { Console.WriteLine("[Roguelike] GetActionPrompt EX: " + ex); return null; }
+        }
+
+        // Dev/test: run encounter <id>'s action through the server engine.
+        public static void RunEncounterAction(string id)
+        {
+            Call("Roguelike.encounter_action", new Dictionary<string, object> { { "id", id } });
+        }
+        // Resolve the current action prompt with the player's choice.
+        public static void ActionRespond(int choice)
+        {
+            Call("Roguelike.action_respond", new Dictionary<string, object> { { "choice", choice } });
+        }
+
         // ----- combat (M4) -----
 
         // Combat node whose duel the server queued in this move's response (-1 = none). When

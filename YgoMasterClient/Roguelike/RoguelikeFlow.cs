@@ -53,6 +53,8 @@ namespace YgoMasterClient
                     RoguelikeRunScreen.MarkMapDirty();
                 }
             }
+            // Action prompts are pumped from RoguelikeMapScreen.Update (only while the map is visible),
+            // so a pending action on re-entry waits for the map instead of opening over home/loading.
         }
 
         static void OnVictoryAck() { }

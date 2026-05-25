@@ -20,6 +20,10 @@ namespace YgoMaster
             dto["maxAscension"] = RoguelikeMeta.Load(GetPlayerDirectory(request.Player)).MaxAscension;
             dto["acts"] = RoguelikeSettings.Acts(RoguelikeSettings.Load(dataDirectory));
             dto["regulationId"] = RoguelikeCardPool.RegulationId(dataDirectory);
+            // The full action tree (pendingAction) is server/disk-only; project a thin prompt for the wire.
+            dto.Remove("pendingAction");
+            Dictionary<string, object> actionPrompt = RoguelikeActionEngine.Project(run);
+            if (actionPrompt != null) dto["action"] = actionPrompt;
             request.Response["Roguelike"] = dto;
             request.Remove("Roguelike");
         }
@@ -185,10 +189,39 @@ namespace YgoMaster
                     if (IsCombat(NodeType(run, target)) && BuildRoguelikeDuel(run, request, target))
                         run.PendingDuelNode = target;
                     else
+                    {
                         run.PendingDuelNode = -1;
+                        // Non-combat node: fire its encounter's action on arrival, if any.
+                        RoguelikeEncounters.Encounter encMove = RoguelikeEncounters.ById(dataDirectory, NodeEncounter(run, target));
+                        if (encMove != null && encMove.Action != null) RoguelikeActionEngine.Start(run, encMove.Action);
+                    }
                     run.Save(GetPlayerDirectory(request.Player));
                 }
             }
+            WriteRun(request, run);
+        }
+
+        // Dev/test: run the action defined on encounter <id> through the real engine.
+        void Act_RoguelikeEncounterAction(GameServerWebRequest request)
+        {
+            string dir = GetPlayerDirectory(request.Player);
+            RoguelikeRun run = RoguelikeRun.Load(dir);
+            string id = request.ActParams != null ? Utils.GetValue<string>(request.ActParams, "id", null) : null;
+            RoguelikeEncounters.Encounter enc = RoguelikeEncounters.ById(dataDirectory, id);
+            if (enc != null && enc.Action != null) RoguelikeActionEngine.Start(run, enc.Action);
+            else Console.WriteLine("[Roguelike] encounter_action: '" + id + "' not found or has no action");
+            run.Save(dir);
+            WriteRun(request, run);
+        }
+
+        // Resolve the current action prompt with the player's choice; the engine settles on the next.
+        void Act_RoguelikeActionRespond(GameServerWebRequest request)
+        {
+            string dir = GetPlayerDirectory(request.Player);
+            RoguelikeRun run = RoguelikeRun.Load(dir);
+            int choice = request.ActParams != null ? Utils.GetValue<int>(request.ActParams, "choice", -1) : -1;
+            RoguelikeActionEngine.Respond(run, choice);
+            run.Save(dir);
             WriteRun(request, run);
         }
 
@@ -245,6 +278,9 @@ namespace YgoMaster
                     run.Currency += (enc != null && enc.Reward.HasValue) ? enc.Reward.Value : RewardFor(nodeType);
                     if (run.Lp <= 0) run.Active = false; // safety: a 0-LP "win" is still death
                     else if (nodeType == "boss") AdvanceActOrWin(run, baseS, dir);
+                    // Post-win encounter action (non-boss for now; boss-advance interaction is v2).
+                    if (run.Active && nodeType != "boss" && enc != null && enc.Action != null)
+                        RoguelikeActionEngine.Start(run, enc.Action);
                 }
                 else
                 {

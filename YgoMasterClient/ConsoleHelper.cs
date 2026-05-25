@@ -940,6 +940,11 @@ namespace YgoMasterClient
                 case "rgabandon":// dev: abandon the current roguelike run (reset for testing)
                     RoguelikeApi.AbandonRun();
                     break;
+                case "rgencounter":// dev: run encounter <id>'s action through the real engine
+                    if (splitted.Length < 2) { Console.WriteLine("[rgencounter] usage: rgencounter <EncounterId>"); break; }
+                    RoguelikeApi.RunEncounterAction(splitted[1]);
+                    Console.WriteLine("[rgencounter] " + splitted[1]);
+                    break;
                 case "clsdump":// dev: dump an IL2 class's methods to _tmp. Usage: clsdump <Namespace>.<Class> [assembly]
                     {
                         if (splitted.Length < 2) { Console.WriteLine("[clsdump] usage: clsdump <Namespace>.<Class> [assembly]"); break; }
@@ -956,12 +961,55 @@ namespace YgoMasterClient
                         {
                             string ft = "?";
                             try { ft = f.ReturnType != null ? f.ReturnType.Name : "?"; } catch { }
-                            sb.Append("  ").Append(f.Name).Append(" : ").Append(ft).Append('\n');
+                            string val = "";
+                            try { if (f.IsStatic && ft.Contains("String")) { IL2Object sv = f.GetValue(); if (sv != null) val = " = \"" + sv.GetValueObj<string>() + "\""; } } catch { }
+                            sb.Append("  ").Append(f.Name).Append(" : ").Append(ft).Append(val).Append('\n');
                         }
                         sb.Append('\n').Append(cls).Append(" methods:\n");
-                        foreach (IL2Method m in c.GetMethods()) sb.Append("  ").Append(m.Name).Append('(').Append(m.GetParameters().Length).Append(")\n");
+                        foreach (IL2Method m in c.GetMethods())
+                        {
+                            string sig; try { sig = m.GetSignature(); } catch { sig = m.Name + "(" + m.GetParameters().Length + ")"; }
+                            sb.Append("  ").Append(sig).Append('\n');
+                        }
                         RoguelikeDebug.Write("cls_" + cls + ".txt", sb.ToString());
                         Console.WriteLine("[clsdump] " + cls + " -> _tmp/cls_" + cls + ".txt");
+                    }
+                    break;
+                case "nsdump":// dev: list classes in a namespace (name : base) to _tmp. Usage: nsdump <Namespace> [assembly]
+                    {
+                        if (splitted.Length < 2) { Console.WriteLine("[nsdump] usage: nsdump <Namespace> [assembly]"); break; }
+                        string ns = splitted[1];
+                        string asm = splitted.Length > 2 ? splitted[2] : "Assembly-CSharp";
+                        SortedSet<string> set = new SortedSet<string>();
+                        foreach (IL2Class c in Assembler.GetAssembly(asm).GetClasses())
+                        {
+                            if (c == null || c.Namespace != ns) continue;
+                            string bt = ""; try { bt = c.BaseType != null ? c.BaseType.Name : ""; } catch { }
+                            set.Add(c.Name + " : " + bt);
+                        }
+                        StringBuilder nsb = new StringBuilder();
+                        foreach (string s in set) nsb.Append(s).Append('\n');
+                        RoguelikeDebug.Write("ns_" + ns + ".txt", nsb.ToString());
+                        Console.WriteLine("[nsdump] " + ns + " -> " + set.Count + " classes -> _tmp/ns_" + ns + ".txt");
+                    }
+                    break;
+                case "rgvc":// dev: open a view by class (reads its k_PrefPath and pushes). Usage: rgvc <Namespace.Class> [assembly]
+                    {
+                        if (splitted.Length < 2) { Console.WriteLine("[rgvc] usage: rgvc <Namespace.Class> [assembly]"); break; }
+                        string full = splitted[1];
+                        int dot = full.LastIndexOf('.');
+                        string ns = dot > 0 ? full.Substring(0, dot) : "";
+                        string cls = dot > 0 ? full.Substring(dot + 1) : full;
+                        string asm = splitted.Length > 2 ? splitted[2] : "Assembly-CSharp";
+                        IL2Class c = Assembler.GetAssembly(asm).GetClass(cls, ns);
+                        if (c == null) { Console.WriteLine("[rgvc] class not found: " + full); break; }
+                        IL2Field pf = c.GetField("k_PrefPath");
+                        if (pf == null) { Console.WriteLine("[rgvc] no k_PrefPath on " + cls); break; }
+                        string path = pf.GetValue().GetValueObj<string>();
+                        IntPtr manager = YgomGame.Menu.ContentViewControllerManager.GetManager();
+                        if (manager == IntPtr.Zero) { Console.WriteLine("[rgvc] no manager"); break; }
+                        YgomSystem.UI.ViewControllerManager.PushChildViewController(manager, path);
+                        Console.WriteLine("[rgvc] pushed " + cls + " prefab=" + path);
                     }
                     break;
                 case "spritedump":// dev: list all loaded sprites (name [atlas]) to _tmp/sprites.txt. Optional name filter: spritedump <substr>
