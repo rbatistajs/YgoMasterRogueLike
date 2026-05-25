@@ -14,6 +14,7 @@ namespace YgoMaster
         public bool DeckChosen;
         public List<object> DeckOffers;            // rolled starter-deck file paths (rel); expanded on the wire
         public Dictionary<string, object> Deck;    // {name, bossCard, deck:{Main,Extra,Side}} or null
+        public Dictionary<string, object> Cards;   // run-owned cards (Player.Cards shape: {cid:{st,r,n,...,tn}}); deck pick + rewards
         public Dictionary<string, object> Map;     // RoguelikeMap.ToDictionary() or null
         public int Position = -1;                   // current node id (-1 = entry, before row 0)
         public List<object> Visited;               // ids already walked
@@ -35,6 +36,7 @@ namespace YgoMaster
                 { "deckChosen", DeckChosen },
                 { "deckOffers", DeckOffers ?? new List<object>() },
                 { "deck", Deck },
+                { "Cards", Cards ?? new Dictionary<string, object>() },
                 { "map", Map },
                 { "position", Position },
                 { "visited", Visited ?? new List<object>() },
@@ -62,6 +64,7 @@ namespace YgoMaster
                 DeckChosen = Utils.GetValue<bool>(d, "deckChosen", false),
                 DeckOffers = Utils.GetValue<List<object>>(d, "deckOffers"),
                 Deck       = Utils.GetValue<Dictionary<string, object>>(d, "deck"),
+                Cards      = Utils.GetValue<Dictionary<string, object>>(d, "Cards"),
                 Map        = Utils.GetValue<Dictionary<string, object>>(d, "map"),
                 Position   = Utils.GetValue<int>(d, "position", -1),
                 Visited    = Utils.GetValue<List<object>>(d, "visited"),
@@ -73,6 +76,32 @@ namespace YgoMaster
                 Act        = Utils.GetValue<int>(d, "act", 0),
                 Ascension  = Utils.GetValue<int>(d, "ascension", 0),
                 Won        = Utils.GetValue<bool>(d, "won", false),
+            };
+        }
+
+        // Add `count` normal copies of a card to the run-owned collection (Player.Cards shape). Used
+        // on deck pick (deck multiplicity) and by the card-reward flow. Preserves any styled counts.
+        public void AddCard(int cardId, int count = 1)
+        {
+            if (count <= 0) return;
+            if (Cards == null) Cards = new Dictionary<string, object>();
+            string key = cardId.ToString();
+            Dictionary<string, object> e = Utils.GetValue<Dictionary<string, object>>(Cards, key) ?? new Dictionary<string, object>();
+            // NoDismantle (p_n) so the deck editor disables the craft/dismantle button for run cards
+            // natively — same as how the player's own deck cards are added.
+            int n     = Utils.GetValue<int>(e, "n");
+            int p1n   = Utils.GetValue<int>(e, "p1n");
+            int p2n   = Utils.GetValue<int>(e, "p2n");
+            int p_n   = Utils.GetValue<int>(e, "p_n") + count;
+            int p_p1n = Utils.GetValue<int>(e, "p_p1n");
+            int p_p2n = Utils.GetValue<int>(e, "p_p2n");
+            Cards[key] = new Dictionary<string, object>
+            {
+                { "st", Utils.GetEpochTime() },
+                { "r", 1 },
+                { "n", n }, { "p1n", p1n }, { "p2n", p2n },
+                { "p_n", p_n }, { "p_p1n", p_p1n }, { "p_p2n", p_p2n },
+                { "tn", n + p1n + p2n + p_n + p_p1n + p_p2n },
             };
         }
 

@@ -19,6 +19,7 @@ namespace YgoMaster
             dto["deckOffers"] = ExpandDeckOffers(run.DeckOffers);
             dto["maxAscension"] = RoguelikeMeta.Load(GetPlayerDirectory(request.Player)).MaxAscension;
             dto["acts"] = RoguelikeSettings.Acts(RoguelikeSettings.Load(dataDirectory));
+            dto["regulationId"] = RoguelikeCardPool.RegulationId(dataDirectory);
             request.Response["Roguelike"] = dto;
             request.Remove("Roguelike");
         }
@@ -146,6 +147,13 @@ namespace YgoMaster
                             };
                             run.DeckChosen = true;
                             run.DeckOffers = new List<object>();
+                            // Seed the run-owned collection with the chosen deck's cards (deck multiplicity).
+                            run.Cards = new Dictionary<string, object>();
+                            DeckInfo picked = new DeckInfo();
+                            picked.FromDictionary(d.Json, false);
+                            foreach (KeyValuePair<int, CardStyleRarity> c in picked.MainDeckCards.GetCollection()) run.AddCard(c.Key);
+                            foreach (KeyValuePair<int, CardStyleRarity> c in picked.ExtraDeckCards.GetCollection()) run.AddCard(c.Key);
+                            foreach (KeyValuePair<int, CardStyleRarity> c in picked.SideDeckCards.GetCollection()) run.AddCard(c.Key);
                             run.Act = 0;
                             Dictionary<string, object> eff = RoguelikeSettings.Effective(
                                 RoguelikeSettings.Load(dataDirectory), run.Act, run.Ascension);
@@ -178,6 +186,24 @@ namespace YgoMaster
                         run.PendingDuelNode = target;
                     else
                         run.PendingDuelNode = -1;
+                    run.Save(GetPlayerDirectory(request.Player));
+                }
+            }
+            WriteRun(request, run);
+        }
+
+        // Persist an edited run deck. The client (RoguelikeDeckEditScreen) does its own validation and
+        // sends the deck in DeckInfo dictionary shape ({m:{ids,r}, e, s}); we store it into the run's
+        // deck (keeping name/bossCard/description) so subsequent duels use the edited list.
+        void Act_RoguelikeSaveDeck(GameServerWebRequest request)
+        {
+            RoguelikeRun run = RoguelikeRun.Load(GetPlayerDirectory(request.Player));
+            if (run.Active && run.DeckChosen && run.Deck != null && request.ActParams != null)
+            {
+                Dictionary<string, object> deckDict = Utils.GetValue<Dictionary<string, object>>(request.ActParams, "deck");
+                if (deckDict != null)
+                {
+                    run.Deck["deck"] = deckDict;
                     run.Save(GetPlayerDirectory(request.Player));
                 }
             }
@@ -259,32 +285,101 @@ namespace YgoMaster
             unchecked { return (int)((uint)(runSeed * 31) ^ (uint)(act * 2654435761)); }
         }
 
-        // Build the act map and bake the boss encounter onto its node, so the map can name the boss
-        // ahead of the fight. duel/elite nodes pick their encounter lazily at arrival instead.
+        // Build the act map and bake encounters for the configured node types, so the map can name them
+        // (and show their icon) ahead of the fight. Non-baked combat types pick lazily at arrival.
         Dictionary<string, object> BuildActMap(RoguelikeRun run, Dictionary<string, object> eff)
         {
             RoguelikeMapLayout layout = RoguelikeMapLayout.Create(RoguelikeSettings.Layout(eff));
             RoguelikeMap map = layout.Build(ActSeed(run.Seed, run.Act), eff);
-            BakeBossEncounter(run, map);
+            BakeEncounters(run, map, eff);
             return map.ToDictionary();
         }
 
-        // Pick a boss encounter (seeded by the boss node) and store its id + display name on the node.
-        void BakeBossEncounter(RoguelikeRun run, RoguelikeMap map)
+        // For each node whose type is in mapGen.bakeTypes, pick an encounter (seeded per node) and store
+        // its id + display name + icon on the node. Deterministic: a resumed run re-derives the same map.
+        void BakeEncounters(RoguelikeRun run, RoguelikeMap map, Dictionary<string, object> eff)
         {
-            MapNode boss = null;
-            foreach (MapNode n in map.Nodes) if (n.Type == "boss") { boss = n; break; }
-            if (boss == null) return;
-            Random rng = new Random(DuelRngSeed(run.Seed, run.Act, boss.Id));
-            RoguelikeEncounters.Encounter e = RoguelikeEncounters.Pick(
-                dataDirectory, "boss", run.Act, boss.Row, run.Ascension, rng);
-            if (e == null)
+            HashSet<string> bakeTypes = RoguelikeSettings.BakeTypes(eff);
+            foreach (MapNode n in map.Nodes)
             {
-                Console.WriteLine("[Roguelike] no boss encounter for act " + run.Act + " asc " + run.Ascension);
-                return;
+                RoguelikeEncounters.Encounter e = null;
+                if (bakeTypes.Contains(n.Type))
+                {
+                    Random rng = new Random(DuelRngSeed(run.Seed, run.Act, n.Id));
+                    e = RoguelikeEncounters.Pick(dataDirectory, n.Type, run.Act, n.Row, run.Ascension, rng);
+                    if (e == null)
+                        Console.WriteLine("[Roguelike] no " + n.Type + " encounter to bake (act " + run.Act + " asc " + run.Ascension + ")");
+                }
+                if (e != null)
+                {
+                    n.Encounter = e.Id;
+                    n.Name = e.Name;
+                    n.IconImage = !string.IsNullOrEmpty(e.IconImage) ? e.IconImage : DeriveIconImage(e.Deck);
+                }
+                if (IsCombat(n.Type))
+                {
+                    n.EnemyLp = (e != null && e.EnemyLp.HasValue) ? e.EnemyLp.Value : RoguelikeSettings.EnemyLpFor(eff, n.Type);
+                    n.Reward = (e != null && e.Reward.HasValue) ? e.Reward.Value : RewardFor(n.Type);
+                }
+                n.Modifiers = SummarizeModifiers(eff, n.Type, e);
             }
-            boss.Encounter = e.Id;
-            boss.Name = e.Name;
+        }
+
+        // Declared-modifier preview for a node: per-type defaults merged with the encounter's own
+        // modifiers (Merge sums extraLp/extraHand, keeps positional lists). Flattened to
+        // { side: { extraLp, extraHand, monsters, spellTraps, hand } } with zero entries omitted.
+        // Declared only — no seeded resolution. Returns null when nothing to show.
+        Dictionary<string, object> SummarizeModifiers(Dictionary<string, object> eff, string type, RoguelikeEncounters.Encounter enc)
+        {
+            List<Dictionary<string, object>> layers = new List<Dictionary<string, object>>();
+            Dictionary<string, object> defaults = RoguelikeSettings.ModifierDefaults(eff, type);
+            if (defaults != null) layers.Add(defaults);
+            if (enc != null && enc.Modifiers != null) layers.Add(enc.Modifiers);
+            if (layers.Count == 0) return null;
+
+            Dictionary<string, object> merged = RoguelikeModifiers.Merge(layers);
+            Dictionary<string, object> outDict = new Dictionary<string, object>();
+            foreach (string side in new[] { "player", "enemy" })
+            {
+                Dictionary<string, object> s = Utils.GetValue<Dictionary<string, object>>(merged, side);
+                if (s == null) continue;
+                Dictionary<string, object> flat = new Dictionary<string, object>();
+                AddIfNonZero(flat, "extraLp", Utils.GetValue<int>(s, "extraLp", 0));
+                AddIfNonZero(flat, "extraHand", Utils.GetValue<int>(s, "extraHand", 0));
+                AddIfNonZero(flat, "monsters", CountList(s, "monsters"));
+                AddIfNonZero(flat, "spellTraps", CountList(s, "spellTraps"));
+                AddIfNonZero(flat, "hand", CountList(s, "hand"));
+                if (flat.Count > 0) outDict[side] = flat;
+            }
+            return outDict.Count > 0 ? outDict : null;
+        }
+
+        static void AddIfNonZero(Dictionary<string, object> d, string key, int v) { if (v != 0) d[key] = v; }
+
+        static int CountList(Dictionary<string, object> side, string key)
+        {
+            List<object> l = Utils.GetValue<List<object>>(side, key);
+            if (l == null) return 0;
+            int c = 0;
+            foreach (object o in l) if (o != null) c++;
+            return c;
+        }
+
+        // Default node art when an encounter has no explicit icon_image: the deck's first main-deck card.
+        string DeriveIconImage(string deckFile)
+        {
+            try
+            {
+                string path = RoguelikeDeckPool.ResolveOpponentDeck(dataDirectory, deckFile);
+                if (path == null) return null;
+                DeckInfo di = new DeckInfo();
+                di.File = path;
+                di.Load();
+                List<KeyValuePair<int, CardStyleRarity>> cards = di.MainDeckCards.GetCollection();
+                if (cards.Count > 0) return "card_" + cards[0].Key;
+            }
+            catch (Exception ex) { Console.WriteLine("[Roguelike] DeriveIconImage EX: " + ex.Message); }
+            return null;
         }
 
         static bool IsCombat(string type) => type == "duel" || type == "elite" || type == "boss";
@@ -340,10 +435,12 @@ namespace YgoMaster
             int floor = NodeRow(run, nodeId);
             Random duelRng = new Random(DuelRngSeed(run.Seed, run.Act, nodeId));
 
-            // Boss encounter is baked on the node at map-gen; duel/elite are picked here (lazy). The
-            // pick is the first RNG draw, so a resumed duel re-derives the same enemy and draws.
-            RoguelikeEncounters.Encounter enc = nodeType == "boss"
-                ? RoguelikeEncounters.ById(dataDirectory, NodeEncounter(run, nodeId))
+            // Baked nodes (mapGen.bakeTypes) already have their encounter chosen at map-gen; the rest
+            // pick here (lazy). The lazy pick is the first RNG draw, so a resumed duel re-derives the
+            // same enemy and draws.
+            string baked = NodeEncounter(run, nodeId);
+            RoguelikeEncounters.Encounter enc = !string.IsNullOrEmpty(baked)
+                ? RoguelikeEncounters.ById(dataDirectory, baked)
                 : RoguelikeEncounters.Pick(dataDirectory, nodeType, run.Act, floor, run.Ascension, duelRng);
             if (enc == null)
             {

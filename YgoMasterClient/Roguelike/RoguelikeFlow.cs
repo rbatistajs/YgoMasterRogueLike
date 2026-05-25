@@ -42,9 +42,9 @@ namespace YgoMasterClient
                     // Final boss down: the run is over. Show victory; the dead-run map underneath is
                     // harmless (home will offer a fresh run at the newly unlocked ascension).
                     YgomGame.Menu.CommonDialogViewController.OpenConfirmationDialog(
-                        "Vitória!",
-                        "Você completou a run! Ascensão máxima desbloqueada: " + RoguelikeApi.MaxAscension() + ".",
-                        "OK", OnVictoryAck);
+                        RoguelikeLabels.Get("run.victory.title", "Vitória!"),
+                        RoguelikeLabels.Get("run.victory.msg", "Você completou a run! Ascensão máxima desbloqueada: {0}.", RoguelikeApi.MaxAscension()),
+                        RoguelikeLabels.Get("common.ok", "OK"), OnVictoryAck);
                 }
                 else
                 {

@@ -9,8 +9,12 @@ namespace YgoMaster
         public int Row;
         public int Col;
         public List<int> Next = new List<int>();   // connected nodes in Row+1
-        public string Encounter;     // baked encounter id (boss only; chosen at map-gen)
-        public string Name;          // display name for the baked encounter (boss only)
+        public string Encounter;     // baked encounter id (baked types; chosen at map-gen)
+        public string Name;          // display name for the baked encounter
+        public string IconImage;     // baked encounter art ("card_<cid>" / "profile_<id>"), if any
+        public int? EnemyLp;         // baked combat enemy starting LP (preview), if any
+        public int? Reward;          // baked currency reward (preview), if any
+        public Dictionary<string, object> Modifiers; // declared-modifier summary, or null
 
         public Dictionary<string, object> ToDictionary()
         {
@@ -22,6 +26,10 @@ namespace YgoMaster
             };
             if (!string.IsNullOrEmpty(Encounter)) d["encounter"] = Encounter;
             if (!string.IsNullOrEmpty(Name)) d["name"] = Name;
+            if (!string.IsNullOrEmpty(IconImage)) d["iconImage"] = IconImage;
+            if (EnemyLp.HasValue) d["enemyLp"] = EnemyLp.Value;
+            if (Reward.HasValue) d["reward"] = Reward.Value;
+            if (Modifiers != null && Modifiers.Count > 0) d["modifiers"] = Modifiers;
             return d;
         }
     }

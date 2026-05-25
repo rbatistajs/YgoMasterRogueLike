@@ -70,6 +70,10 @@
     <Compile Include="YgoMasterClient\Roguelike\RoguelikeFlow.cs" />
     <Compile Include="YgoMasterClient\Roguelike\RoguelikeRunScreen.cs" />
     <Compile Include="YgoMasterClient\Roguelike\RoguelikeMapScreen.cs" />
+    <Compile Include="YgoMasterClient\Roguelike\RoguelikeNodeAction.cs" />
+    <Compile Include="YgoMasterClient\Roguelike\RoguelikeNodeDrawerTest.cs" />
+    <Compile Include="YgoMasterClient\Roguelike\RoguelikeDeckEditScreen.cs" />
+    <Compile Include="YgoMasterClient\Roguelike\RoguelikeLabels.cs" />
     <Compile Include="YgoMasterClient\Roguelike\RoguelikeHomeButton.cs" />
     <Compile Include="YgoMasterClient\SoundInterceptor.cs" />
     <Compile Include="YgoMasterClient\TradeUtils.cs" />

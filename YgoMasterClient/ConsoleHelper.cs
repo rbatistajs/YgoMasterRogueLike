@@ -903,6 +903,31 @@ namespace YgoMasterClient
                         Console.WriteLine("[treedump] " + tpath + " depth=" + tdepth + " -> _tmp/" + tfile);
                     }
                     break;
+                case "gtree":// Global find by name -> subtree dump (reaches overlays like ActionSheet). Usage: gtree <name> [depth]
+                    {
+                        if (splitted.Length < 2) { Console.WriteLine("[gtree] usage: gtree <name> [depth]"); break; }
+                        int gdepth = 8;
+                        int glast = splitted.Length;
+                        if (splitted.Length > 2 && int.TryParse(splitted[splitted.Length - 1], out int pgd)) { gdepth = pgd; glast = splitted.Length - 1; }
+                        string gname = string.Join(" ", splitted, 1, glast - 1);
+                        IntPtr gfound = UnityEngine.GameObject.Find(gname);
+                        if (gfound == IntPtr.Zero) { Console.WriteLine("[gtree] not found (must be active): " + gname); break; }
+                        string gfile = "tree_" + UnityEngine.UnityObject.GetName(gfound) + ".txt";
+                        RoguelikeDebug.Write(gfile, RoguelikeDebug.DumpTree(gfound, gdepth));
+                        Console.WriteLine("[gtree] " + gname + " depth=" + gdepth + " -> _tmp/" + gfile);
+                    }
+                    break;
+                case "gjson":// Global find by name -> full JSON dump of the object (reaches overlays). Usage: gjson <name>
+                    {
+                        if (splitted.Length < 2) { Console.WriteLine("[gjson] usage: gjson <name>"); break; }
+                        string jname = string.Join(" ", splitted, 1, splitted.Length - 1);
+                        IntPtr jfound = UnityEngine.GameObject.Find(jname);
+                        if (jfound == IntPtr.Zero) { Console.WriteLine("[gjson] not found (must be active): " + jname); break; }
+                        string jfile = "go_" + UnityEngine.UnityObject.GetName(jfound) + ".json";
+                        RoguelikeDebug.Write(jfile, UnityEngine.GameObject.Dump(jfound));
+                        Console.WriteLine("[gjson] " + jname + " -> _tmp/" + jfile);
+                    }
+                    break;
                 case "rgpush":// Push an arbitrary view controller prefab standalone (dev: test reuse bases). Usage: rgpush <prefab/path>
                     {
                         if (splitted.Length < 2) { Console.WriteLine("[rgpush] usage: rgpush <prefab/path>"); break; }

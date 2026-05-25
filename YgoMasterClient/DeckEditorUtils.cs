@@ -69,6 +69,10 @@ namespace YgomGame.Deck
 
         public static void UpdateView(IntPtr thisPtr, bool updateDataCount, bool select = true)
         {
+            if (DeckEditViewController2.IsRoguelikeActive())
+            {
+                FilterToRunCards(thisPtr);
+            }
             hookUpdateView.Original(thisPtr, updateDataCount, select);
 
             IL2ListExplicit cardList = new IL2ListExplicit(GetDataList.Invoke(thisPtr).ptr, cardBaseDataClassInfo);
@@ -82,6 +86,33 @@ namespace YgomGame.Deck
 
             DeckEditViewController2.NumFilteredCards = cids.Count;
             DeckEditViewController2.SetExtraText();
+        }
+
+        // Restrict the collection's data list to cards the active run owns ($.Roguelike.Cards). Runs
+        // before the view renders; re-applied every UpdateView so a filter/sort rebuild stays
+        // restricted. Kept structs are copied to managed memory then re-added via stack pointer to
+        // avoid the IL2CPP GC reclaiming boxed list elements between Clear and Add.
+        static void FilterToRunCards(IntPtr thisPtr)
+        {
+            Dictionary<int, int> owned = YgoMasterClient.RoguelikeApi.RunOwnedCardCounts();
+            if (owned.Count == 0) return;
+            IL2Object listObj = GetDataList.Invoke(thisPtr);
+            if (listObj == null || listObj.ptr == IntPtr.Zero) return;
+            IL2ListExplicit list = new IL2ListExplicit(listObj.ptr, cardBaseDataClassInfo);
+            int n = list.Count;
+            List<CardBaseData> kept = new List<CardBaseData>(n);
+            for (int i = 0; i < n; i++)
+            {
+                CardBaseData cd = list.GetRef<CardBaseData>(i);
+                if (owned.ContainsKey(cd.CardID)) kept.Add(cd);
+            }
+            if (kept.Count == n) return;
+            list.Clear();
+            for (int i = 0; i < kept.Count; i++)
+            {
+                CardBaseData cd = kept[i];
+                list.Add(new IntPtr(&cd));
+            }
         }
     }
 
@@ -386,6 +417,8 @@ namespace YgomGame
         static IL2Method methodGetRemainPremiumCard;
         static IL2Method methodGetDeckName;
         static IL2Method methodGetDeckID;
+        static IL2Field fieldRegulationId;
+        static IL2Method methodRefreshRegulation;
 
         static IntPtr saveButtonTextComponent;
         static IntPtr extraTextComponent;
@@ -420,6 +453,15 @@ namespace YgomGame
         delegate void Del_OnClickSaveButton(IntPtr thisPtr);
         static Hook<Del_OnClickSaveButton> hookOnClickSaveButton;
 
+        delegate void Del_ShowModifiedDialog(IntPtr thisPtr, IntPtr onSave, IntPtr onDiscard, IntPtr onCancel);
+        static Hook<Del_ShowModifiedDialog> hookShowModifiedDialog;
+
+        delegate void Del_OnClickRegulation(IntPtr thisPtr);
+        static Hook<Del_OnClickRegulation> hookOnClickRegulation;
+
+        delegate void Del_InitializeDetailView(IntPtr thisPtr, IntPtr arg);
+        static Hook<Del_InitializeDetailView> hookInitializeDetailView;
+
         delegate IntPtr Del_AddToMainOrExtraDeck(IntPtr thisPtr, ref YgomGame.Deck.CardBaseData baseData, csbool isUndo);
         static Hook<Del_AddToMainOrExtraDeck> hookAddToMainOrExtraDeck;
 
@@ -445,11 +487,16 @@ namespace YgomGame
             methodGetRemainPremiumCard = classInfo.GetMethod("getRemainPremiumCard");
             methodGetDeckName = classInfo.GetProperty("m_DeckName").GetGetMethod();
             methodGetDeckID = classInfo.GetProperty("m_DeckID").GetGetMethod();
+            fieldRegulationId = classInfo.GetField("m_RegulationID");
+            methodRefreshRegulation = classInfo.GetMethod("RefreshRegulation");
             hookInitializeView = new Hook<Del_InitializeView>(InitializeView, classInfo.GetMethod("InitializeView"));
             hookSortDeckViewCards = new Hook<Del_SortDeckViewCards>(SortDeckViewCards, classInfo.GetMethod("SortDeckViewCards"));
             hookNotificationStackRemove = new Hook<Del_NotificationStackRemove>(NotificationStackRemove, classInfo.GetMethod("NotificationStackRemove"));
             hookNeedSave = new Hook<Del_NeedSave>(NeedSave, classInfo.GetMethod("NeedSave"));
             hookOnClickSaveButton = new Hook<Del_OnClickSaveButton>(OnClickSaveButton, classInfo.GetMethod("OnClickSaveButton"));
+            hookShowModifiedDialog = new Hook<Del_ShowModifiedDialog>(ShowModifiedDialog, classInfo.GetMethod("ShowModifiedDialog"));
+            hookOnClickRegulation = new Hook<Del_OnClickRegulation>(OnClickRegulation, classInfo.GetMethod("OnClickRegulation"));
+            hookInitializeDetailView = new Hook<Del_InitializeDetailView>(InitializeDetailView, classInfo.GetMethod("initializeDetailView"));
             hookAddToMainOrExtraDeck = new Hook<Del_AddToMainOrExtraDeck>(AddToMainOrExtraDeck, classInfo.GetMethod("AddToMainOrExtraDeck", x => x.GetParameters().Length == 2));
             hookRemoveFromDeck1 = new Hook<Del_RemoveFromDeck1>(RemoveFromDeck1, classInfo.GetMethod("RemoveFromDeck", x => x.GetParameters().Length == 2));
             hookRemoveFromDeck2 = new Hook<Del_RemoveFromDeck2>(RemoveFromDeck2, classInfo.GetMethod("RemoveFromDeck", x => x.GetParameters().Length == 4));
@@ -484,10 +531,12 @@ namespace YgomGame
             currentInstance = thisPtr;
             InitExtraTextComponent(thisPtr);
             CacheSaveButtonTextComponent(thisPtr);
+            YgoMasterClient.RoguelikeDeckEditScreen.OnDeckEditCreated(thisPtr); // roguelike deck-edit customization (gated)
         }
 
         static void SortDeckViewCards(IntPtr thisPtr)
         {
+            YgoMasterClient.RoguelikeDeckEditScreen.OnSortDeckViewCards(thisPtr); // roguelike run-deck load (gated, one-shot)
             if (TradeUtils.IsTrading)
             {
                 // We add the cards already in the trade here as this is the earliest point it seems to work without breaking things
@@ -579,6 +628,7 @@ namespace YgomGame
 
         static void NotificationStackRemove(IntPtr thisPtr)
         {
+            YgoMasterClient.RoguelikeDeckEditScreen.OnClose(thisPtr); // restore player collection if it was our run deck edit
             TradeUtils.OnTradeClosed();
             currentInstance = IntPtr.Zero;
             extraTextComponent = IntPtr.Zero;
@@ -588,7 +638,13 @@ namespace YgomGame
 
         static int NeedSave(IntPtr thisPtr)
         {
-            if (TradeUtils.IsTrading)
+            if (YgoMasterClient.RoguelikeDeckEditScreen.IsRunDeckEdit(thisPtr))
+            {
+                // The back routes through ShowModifiedDialog (gated by the native dirty flag, which our
+                // SetCards trips); we handle the real-change check there. Keep this reporting changes too.
+                return YgoMasterClient.RoguelikeDeckEditScreen.HasUnsavedChanges() ? 1 : 0;
+            }
+            else if (TradeUtils.IsTrading)
             {
                 return 0;
             }
@@ -598,9 +654,42 @@ namespace YgomGame
             }
         }
 
+        // The card detail panel re-shows its buttons on each card; re-hide "Como obter" and the craft
+        // group for our run deck editor after the native update.
+        static void InitializeDetailView(IntPtr thisPtr, IntPtr arg)
+        {
+            hookInitializeDetailView.Original(thisPtr, arg);
+            if (YgoMasterClient.RoguelikeDeckEditScreen.IsRunDeckEdit(thisPtr))
+                YgoMasterClient.RoguelikeDeckEditScreen.HideCardDetailExtras(UnityEngine.Component.GetGameObject(thisPtr));
+        }
+
+        // Regulation is fixed by the run's card pool — block the regulation picker for our deck editor
+        // (the button stays visible showing the pool regulation, just isn't changeable).
+        static void OnClickRegulation(IntPtr thisPtr)
+        {
+            if (YgoMasterClient.RoguelikeDeckEditScreen.IsRunDeckEdit(thisPtr)) return;
+            hookOnClickRegulation.Original(thisPtr);
+        }
+
+        // Native "unsaved changes — return?" dialog (its save persists a normal player deck outside the
+        // run). For our run deck editor, replace it with our own save/discard/cancel confirm.
+        static void ShowModifiedDialog(IntPtr thisPtr, IntPtr onSave, IntPtr onDiscard, IntPtr onCancel)
+        {
+            if (YgoMasterClient.RoguelikeDeckEditScreen.IsRunDeckEdit(thisPtr))
+            {
+                YgoMasterClient.RoguelikeDeckEditScreen.HandleBack();
+                return;
+            }
+            hookShowModifiedDialog.Original(thisPtr, onSave, onDiscard, onCancel);
+        }
+
         static void OnClickSaveButton(IntPtr thisPtr)
         {
-            if (TradeUtils.IsTrading)
+            if (YgoMasterClient.RoguelikeDeckEditScreen.IsRunDeckEdit(thisPtr))
+            {
+                YgoMasterClient.RoguelikeDeckEditScreen.OnClickSave(thisPtr);
+            }
+            else if (TradeUtils.IsTrading)
             {
                 TradeUtils.OnClickTrade();
             }
@@ -620,6 +709,7 @@ namespace YgomGame
 
         static IntPtr AddToMainOrExtraDeck(IntPtr thisPtr, ref YgomGame.Deck.CardBaseData cardData, csbool isUndo)
         {
+            if (IsRoguelikeActive()) YgoMasterClient.RoguelikeDeckEditScreen.MarkDirty(); // user edited the run deck
             if (TradeUtils.IsTrading)
             {
                 Program.NetClient.Send(new TradeMoveCardMessage()
@@ -658,6 +748,7 @@ namespace YgomGame
 
         static IntPtr RemoveFromDeck1(IntPtr thisPtr, ref YgomGame.Deck.CardBaseData cardData, csbool isUndo)
         {
+            if (IsRoguelikeActive()) YgoMasterClient.RoguelikeDeckEditScreen.MarkDirty(); // user edited the run deck
             if (TradeUtils.IsTrading)
             {
                 Program.NetClient.Send(new TradeMoveCardMessage()
@@ -682,6 +773,7 @@ namespace YgomGame
 
         static IntPtr RemoveFromDeck2(IntPtr thisPtr, IntPtr card, csbool isDrag, IntPtr pos, csbool isFlick)
         {
+            if (IsRoguelikeActive()) YgoMasterClient.RoguelikeDeckEditScreen.MarkDirty(); // user edited the run deck
             if (TradeUtils.IsTrading)
             {
                 YgomGame.Deck.CardBaseData cardData = YgomGame.Deck.CardBase.GetBaseData(card);
@@ -877,6 +969,25 @@ namespace YgomGame
             }
             IL2Object result = methodGetDeckID.Invoke(currentInstance);
             return result != null ? result.GetValueRef<int>() : 0;
+        }
+
+        // True when the active deck editor is the one Roguelike pushed (currentInstance tracks the
+        // top VC, so this is false for normal deck edits and after close). Gates run-collection
+        // filtering in CardCollectionView.UpdateView.
+        public static bool IsRoguelikeActive()
+        {
+            return currentInstance != IntPtr.Zero && YgoMasterClient.RoguelikeDeckEditScreen.IsRunDeckEdit(currentInstance);
+        }
+
+        // Set the editor's regulation (banlist). Used by the roguelike to apply the run pool's regulation.
+        public static void SetRegulation(int regulationId)
+        {
+            if (currentInstance == IntPtr.Zero)
+            {
+                return;
+            }
+            fieldRegulationId.SetValue(currentInstance, new IntPtr(&regulationId));
+            methodRefreshRegulation.Invoke(currentInstance, new IntPtr[] { new IntPtr(&regulationId) });
         }
 
         public static void PopViewController()

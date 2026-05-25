@@ -136,6 +136,18 @@ namespace YgoMaster
             return _poolCfg;
         }
 
+        // Regulation id for the pool's configured regulation name (CardPool.json "regulation"), or the
+        // default when unset/unknown. Used to drive the run deck editor's banlist.
+        public static int RegulationId(string dataDirectory)
+        {
+            Dictionary<string, object> cfg = PoolConfig(dataDirectory);
+            string regName = cfg != null ? Utils.GetValue<string>(cfg, "regulation") : null;
+            int regId;
+            if (!string.IsNullOrEmpty(regName) && DeckInfo.RegulationIdsByName.TryGetValue(regName, out regId))
+                return regId;
+            return DeckInfo.DefaultRegulationId;
+        }
+
         public static HashSet<int> AnyPool(string dataDirectory, Dictionary<string, object> regulation, int ascension)
         {
             HashSet<int> cached;

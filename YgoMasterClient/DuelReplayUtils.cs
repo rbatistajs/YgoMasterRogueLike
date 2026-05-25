@@ -24,6 +24,9 @@ namespace YgomGame.SubMenu
 
         static void OnCreatedView(IntPtr thisPtr)
         {
+            // Roguelike reuses this submenu for node detail: it fills its own items + runs base setup,
+            // so we skip the home items and the Original entirely.
+            if (YgoMasterClient.RoguelikeNodeDrawerTest.OnHomeSubMenuCreated(thisPtr)) return;
             if (ClientSettings.DuelReplayAddHomeSubMenuButtons)
             {
                 SubMenuViewController.SetTitleText(thisPtr, ClientSettings.CustomTextYgoMaster);

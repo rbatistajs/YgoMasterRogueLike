@@ -169,7 +169,11 @@ namespace YgoMasterClient
         {
             public int Id, Row, Col;
             public string Type = "duel";
-            public string Name = "";   // baked encounter display name (boss only)
+            public string Name = "";       // baked encounter display name
+            public string IconImage = "";  // baked encounter art ("card_<cid>" / "profile_<id>")
+            public int EnemyLp = -1;       // baked enemy LP (-1 = none)
+            public int Reward = -1;        // baked reward (-1 = none)
+            public Dictionary<string, object> Modifiers; // declared-modifier summary, or null
             public List<int> Next = new List<int>();
         }
 
@@ -216,6 +220,10 @@ namespace YgoMasterClient
                         Row = d.ContainsKey("row") ? Convert.ToInt32(d["row"]) : 0,
                         Col = d.ContainsKey("col") ? Convert.ToInt32(d["col"]) : 0,
                         Name = d.ContainsKey("name") ? Convert.ToString(d["name"]) : "",
+                        IconImage = d.ContainsKey("iconImage") ? Convert.ToString(d["iconImage"]) : "",
+                        EnemyLp = d.ContainsKey("enemyLp") ? Convert.ToInt32(d["enemyLp"]) : -1,
+                        Reward = d.ContainsKey("reward") ? Convert.ToInt32(d["reward"]) : -1,
+                        Modifiers = d.ContainsKey("modifiers") ? d["modifiers"] as Dictionary<string, object> : null,
                     };
                     List<object> next = d.ContainsKey("next") ? d["next"] as List<object> : null;
                     if (next != null) foreach (object v in next) { try { n.Next.Add(Convert.ToInt32(v)); } catch { } }
@@ -250,8 +258,75 @@ namespace YgoMasterClient
         // Re-fetch the pending combat duel (same seed) so the client can relaunch an unfinished one.
         public static void ResumeDuel() { Call("Roguelike.resume_duel"); }
 
+        // Regulation id of the run's card pool (banlist) — for the deck editor.
+        public static int RegulationId() { return YgomSystem.Utility.ClientWork.GetByJsonPath<int>("Roguelike.regulationId"); }
+
         // Current run LP / cap (for the map LP indicator).
         public static int Lp() { return YgomSystem.Utility.ClientWork.GetByJsonPath<int>("Roguelike.lp"); }
         public static int MaxLp() { return YgomSystem.Utility.ClientWork.GetByJsonPath<int>("Roguelike.maxLp"); }
+
+        // ----- run deck (for the in-run deck editor view) -----
+
+        // Card ids of the chosen run deck's main / extra section (with duplicates, as built). Shape:
+        // $.Roguelike.deck = {name, bossCard, description, deck:{m:{ids:[...]}, e:{ids:[...]}, s:{...}}}.
+        public static List<int> RunDeckMain() { return RunDeckCards("m"); }
+        public static List<int> RunDeckExtra() { return RunDeckCards("e"); }
+
+        // Persist an edited run deck (DeckInfo.ToDictionary shape: {m:{ids,r}, e, s}) to the server.
+        public static void SaveDeck(Dictionary<string, object> deck)
+        {
+            Call("Roguelike.save_deck", new Dictionary<string, object> { { "deck", deck } });
+        }
+
+        // Cards the active run owns, cid -> owned count (tn from $.Roguelike.Cards, the
+        // Player.Cards-shaped collection). Used to restrict the deck-editor collection to
+        // run-obtained cards and to show the run's copy count instead of the player's.
+        public static Dictionary<int, int> RunOwnedCardCounts()
+        {
+            Dictionary<int, int> result = new Dictionary<int, int>();
+            try
+            {
+                string json = YgomSystem.Utility.ClientWork.SerializePath("Roguelike.Cards");
+                if (string.IsNullOrEmpty(json)) return result;
+                Dictionary<string, object> d = MiniJSON.Json.Deserialize(json) as Dictionary<string, object>;
+                if (d == null) return result;
+                foreach (KeyValuePair<string, object> e in d)
+                {
+                    int cid;
+                    if (!int.TryParse(e.Key, out cid)) continue;
+                    Dictionary<string, object> card = e.Value as Dictionary<string, object>;
+                    int tn = (card != null && card.ContainsKey("tn")) ? Convert.ToInt32(card["tn"]) : 0;
+                    result[cid] = tn;
+                }
+            }
+            catch (Exception ex) { Console.WriteLine("[Roguelike] RunOwnedCardCounts EX: " + ex); }
+            return result;
+        }
+
+        // Total card copies the run owns (sum of tn across all cards).
+        public static int RunOwnedCardTotal()
+        {
+            int total = 0;
+            foreach (int v in RunOwnedCardCounts().Values) total += v;
+            return total;
+        }
+
+        static List<int> RunDeckCards(string section)
+        {
+            List<int> result = new List<int>();
+            try
+            {
+                string json = YgomSystem.Utility.ClientWork.SerializePath("Roguelike.deck");
+                if (string.IsNullOrEmpty(json)) return result;
+                Dictionary<string, object> wrap = MiniJSON.Json.Deserialize(json) as Dictionary<string, object>;
+                Dictionary<string, object> deck = wrap != null && wrap.ContainsKey("deck") ? wrap["deck"] as Dictionary<string, object> : null;
+                Dictionary<string, object> sect = deck != null && deck.ContainsKey(section) ? deck[section] as Dictionary<string, object> : null;
+                List<object> ids = sect != null && sect.ContainsKey("ids") ? sect["ids"] as List<object> : null;
+                if (ids == null) return result;
+                foreach (object v in ids) { try { result.Add(Convert.ToInt32(v)); } catch { } }
+            }
+            catch (Exception ex) { Console.WriteLine("[Roguelike] RunDeckCards EX: " + ex); }
+            return result;
+        }
     }
 }

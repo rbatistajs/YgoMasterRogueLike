@@ -27,6 +27,12 @@ namespace YgoMasterClient
         const float EdgeThickness = 6f;
         const float ColStep = 180f, RowStep = 180f; // 1:1 cell spacing
 
+        // Run-screen VC root and its Window node, for sibling overlays (the node drawer).
+        internal static IntPtr Root() { return _go; }
+        internal static IntPtr WindowRoot() { return _go == IntPtr.Zero ? IntPtr.Zero : GameObject.FindGameObjectByPath(_go, Ui); }
+        // The header TMP cloned per node label; reuse it as a ready-to-clone text template.
+        internal static IntPtr LabelTemplate() { return _bossLabelSrc; }
+
         static IntPtr _rectType, _rectMask2DType;
         static IL2Property _anchorMin, _anchorMax, _pivot, _anchoredPos3D, _sizeDelta, _localEuler, _rectRect;
         static IL2Method _scrollByTargetPos;
@@ -42,8 +48,10 @@ namespace YgoMasterClient
 
         static readonly Col FillDisabled = new Col { r = 0.02f, g = 0.02f, b = 0.04f, a = 0.65f };
         static IL2Method _ueAddListener, _ueRemoveAll;
-        static IntPtr _scrollRectType, _extScrollRectType, _imageType;
-        static IL2Property _scrollRectContent, _scrollViewport, _scrollHorizontal, _scrollVertical, _scrollSensitivity, _graphicColor;
+        static IntPtr _scrollRectType, _extScrollRectType, _imageType, _rawImageType;
+        static IL2Property _scrollRectContent, _scrollViewport, _scrollHorizontal, _scrollVertical, _scrollSensitivity, _graphicColor, _rawImageTexture;
+        static IntPtr _graphicType;
+        static IL2Property _maskPadding, _maskSoftness;
         static IL2Field _extDragScrollEnabled;
         static IntPtr _tweenScaleType;
         static IL2Field _tsFrom, _tsTo, _tStyle, _tDuration, _tTarget;
@@ -65,18 +73,35 @@ namespace YgoMasterClient
         delegate void Del_Start(IntPtr thisPtr);
         static Hook<Del_Start> _hookExtStart;
 
-        struct Col { public float r, g, b, a; }
+        internal struct Col { public float r, g, b, a; }
+        // Binary-compatible with UnityEngine.Vector4 / Vector2Int (RectMask2D padding/softness).
+        [System.Runtime.InteropServices.StructLayout(System.Runtime.InteropServices.LayoutKind.Sequential)]
+        struct Vec4 { public float x, y, z, w; public Vec4(float x, float y, float z, float w) { this.x = x; this.y = y; this.z = z; this.w = w; } }
+        [System.Runtime.InteropServices.StructLayout(System.Runtime.InteropServices.LayoutKind.Sequential)]
+        struct Vec2Int { public int x, y; public Vec2Int(int x, int y) { this.x = x; this.y = y; } }
 
         // Map-click dispatch: CreateUnityAction only bridges captureless delegates, so each
         // reachable node wires a fixed slot lambda; slot->nodeId is rebuilt per render.
-        const int MapSlots = 16;
+        const int MapSlots = 64;
         static readonly int[] _slotNodeId = new int[MapSlots];
         static readonly Action[] _slotActions =
         {
-            () => OnSlot(0), () => OnSlot(1), () => OnSlot(2), () => OnSlot(3),
-            () => OnSlot(4), () => OnSlot(5), () => OnSlot(6), () => OnSlot(7),
-            () => OnSlot(8), () => OnSlot(9), () => OnSlot(10), () => OnSlot(11),
+            () => OnSlot(0),  () => OnSlot(1),  () => OnSlot(2),  () => OnSlot(3),
+            () => OnSlot(4),  () => OnSlot(5),  () => OnSlot(6),  () => OnSlot(7),
+            () => OnSlot(8),  () => OnSlot(9),  () => OnSlot(10), () => OnSlot(11),
             () => OnSlot(12), () => OnSlot(13), () => OnSlot(14), () => OnSlot(15),
+            () => OnSlot(16), () => OnSlot(17), () => OnSlot(18), () => OnSlot(19),
+            () => OnSlot(20), () => OnSlot(21), () => OnSlot(22), () => OnSlot(23),
+            () => OnSlot(24), () => OnSlot(25), () => OnSlot(26), () => OnSlot(27),
+            () => OnSlot(28), () => OnSlot(29), () => OnSlot(30), () => OnSlot(31),
+            () => OnSlot(32), () => OnSlot(33), () => OnSlot(34), () => OnSlot(35),
+            () => OnSlot(36), () => OnSlot(37), () => OnSlot(38), () => OnSlot(39),
+            () => OnSlot(40), () => OnSlot(41), () => OnSlot(42), () => OnSlot(43),
+            () => OnSlot(44), () => OnSlot(45), () => OnSlot(46), () => OnSlot(47),
+            () => OnSlot(48), () => OnSlot(49), () => OnSlot(50), () => OnSlot(51),
+            () => OnSlot(52), () => OnSlot(53), () => OnSlot(54), () => OnSlot(55),
+            () => OnSlot(56), () => OnSlot(57), () => OnSlot(58), () => OnSlot(59),
+            () => OnSlot(60), () => OnSlot(61), () => OnSlot(62), () => OnSlot(63),
         };
 
         static RoguelikeMapScreen()
@@ -131,9 +156,17 @@ namespace YgoMasterClient
                 _tpRtrans = tweenPos.GetField("rtrans");
                 _tpFrom = tweenPos.GetField("from");
                 _tpTo = tweenPos.GetField("to");
-                _rectMask2DType = ui.GetClass("RectMask2D", "UnityEngine.UI").IL2Typeof();
+                IL2Class rectMask2D = ui.GetClass("RectMask2D", "UnityEngine.UI");
+                _rectMask2DType = rectMask2D.IL2Typeof();
+                _maskPadding = rectMask2D.GetProperty("padding");
+                _maskSoftness = rectMask2D.GetProperty("softness");
                 _imageType = ui.GetClass("Image", "UnityEngine.UI").IL2Typeof();
-                _graphicColor = ui.GetClass("Graphic", "UnityEngine.UI").GetProperty("color");
+                IL2Class rawImg = ui.GetClass("RawImage", "UnityEngine.UI");
+                _rawImageType = rawImg.IL2Typeof();
+                _rawImageTexture = rawImg.GetProperty("texture");
+                IL2Class graphic = ui.GetClass("Graphic", "UnityEngine.UI");
+                _graphicType = graphic.IL2Typeof();
+                _graphicColor = graphic.GetProperty("color");
                 _activeInHierarchy = core.GetClass("GameObject", "UnityEngine").GetProperty("activeInHierarchy").GetGetMethod();
                 _tmpType = CastUtils.IL2Typeof("ExtendedTextMeshProUGUI", "YgomSystem.YGomTMPro", "Assembly-CSharp");
                 _ready = true;
@@ -275,7 +308,7 @@ namespace YgoMasterClient
         {
             if (slot < 0 || slot >= MapSlots) return;
             int id = _slotNodeId[slot];
-            if (id >= 0) RoguelikeApi.Move(id);
+            if (id >= 0) RoguelikeNodeAction.Open(id);
         }
 
         // Build OUR OWN scroll: RgScrollView > RgViewport > RgMap inside the DeckGroup, and hide
@@ -294,6 +327,7 @@ namespace YgoMasterClient
             // the deck-management clutter we don't need on the map.
             _bossLabelSrc = GameObject.FindGameObjectByPath(go, HeaderName);
             HideHeaderClutter(go);
+            WireDeckEditButton(go); // keep the header pickup button -> opens the run deck editor
 
             Hide(go, ScrollView);   // hide the game's scroll (its InfinityScroll resized our content)
 
@@ -353,9 +387,9 @@ namespace YgoMasterClient
         // buttons. We keep NameText (title) and DeckNum (its value text repurposed for LP).
         static readonly string[] HeaderClutter =
         {
-            "TextSub", "TournamentDeckNum", "NeuronDeckNum", "ButtonPickupCard",
+            "TextSub", "TournamentDeckNum", "NeuronDeckNum", "ButtonFilter",
             "BulkDecksDeletionButton", "ButtonStructureDeckView", "ExtendedInputField",
-            "ButtonFilter", "ButtonTrashSub", "ButtonTrash", "ButtonCaution",
+            "ButtonTrashSub", "ButtonTrash", "ButtonCaution",
             "ButtonPageUp", "ButtonPageDown", "ButtonOpenNeuronDecks",
         };
 
@@ -367,16 +401,33 @@ namespace YgoMasterClient
             if (deckNum != IntPtr.Zero) GameObject.SetActive(deckNum, true); // ensure the LP slot shows
         }
 
+        // Keep the header pickup button visible and rewire its click to open the run deck editor.
+        static readonly Action _onDeckEdit = RoguelikeDeckEditScreen.Open;
+
+        static void WireDeckEditButton(IntPtr go)
+        {
+            IntPtr btn = GameObject.FindGameObjectByPath(go, HeaderGroup + ".ButtonPickupCard");
+            if (btn == IntPtr.Zero) return;
+            GameObject.SetActive(btn, true);
+            IntPtr sel = GameObject.GetComponent(btn, _selectionButtonType);
+            if (sel == IntPtr.Zero) return;
+            IL2Object onClick = _selBtnOnClick.GetValue(sel);
+            if (onClick == null) return;
+            if (_ueRemoveAll != null) _ueRemoveAll.Invoke(onClick.ptr);
+            IntPtr cb = UnityEngine.Events._UnityAction.CreateUnityAction(_onDeckEdit);
+            _ueAddListener.Invoke(onClick.ptr, new IntPtr[] { cb });
+        }
+
         // Fill the reused header texts each render: NameText = title (act/asc), the "0/999" slot = LP.
         static void SetLpText()
         {
             if (_go == IntPtr.Zero || _tmpType == IntPtr.Zero) return;
             int acts = RoguelikeApi.Acts(); if (acts < 1) acts = 1;
             int asc = RoguelikeApi.Ascension();
-            string title = "Mapa da Run   ·   Ato " + (RoguelikeApi.Act() + 1) + "/" + acts;
-            if (asc > 0) title += "   ·   Asc " + asc;
+            string title = RoguelikeLabels.Get("map.title", "Mapa da Run   ·   Ato {0}/{1}", RoguelikeApi.Act() + 1, acts);
+            if (asc > 0) title += RoguelikeLabels.Get("map.title.asc", "   ·   Asc {0}", asc);
             SetTmpText(HeaderName, title);
-            SetTmpText(HeaderLp, "LP " + RoguelikeApi.Lp() + " / " + RoguelikeApi.MaxLp());
+            SetTmpText(HeaderLp, RoguelikeLabels.Get("map.lp", "LP {0} / {1}", RoguelikeApi.Lp(), RoguelikeApi.MaxLp()));
         }
 
         static void SetTmpText(string path, string text)
@@ -412,6 +463,7 @@ namespace YgoMasterClient
         // current node. Container is left intact so the scroll position carries across moves.
         static void RenderMap(IntPtr template, IntPtr ct, IntPtr srComp, IntPtr deckGroup)
         {
+            RoguelikeNodeAction.Close(); // never leave a stale drawer over a rebuilt map
             List<RoguelikeApi.MapNode> nodes = RoguelikeApi.GetMapNodes();
             int pos = RoguelikeApi.Position();
             HashSet<int> reachable = Reachable(nodes, pos);
@@ -441,14 +493,15 @@ namespace YgoMasterClient
 
                 bool isCurrent = n.Id == pos;
                 bool isVisited = visited.Contains(n.Id);
-                bool isOpen = reachable.Contains(n.Id) && slot < MapSlots;
+                bool isOpen = reachable.Contains(n.Id);
                 if (isCurrent) { curX = x; curY = y; }
-                if (isOpen)
+                if (slot < MapSlots) // every node is clickable now (drawer decides the action)
                 {
                     _slotNodeId[slot] = n.Id;
                     WireNodeClick(node, _slotActions[slot]);
                     slot++;
                 }
+                SetNodeArt(node, n.IconImage); // baked encounter art (behind the type glyph)
                 StyleNode(node, n.Type, isOpen, isVisited, isCurrent);
                 if (!string.IsNullOrEmpty(n.Name)) AddBossLabel(node, n.Name);
             }
@@ -503,12 +556,15 @@ namespace YgoMasterClient
             float bright = isOpen ? 1f : (isVisited ? 0.8f : 0.45f);
             SetImageColor(outFrame, Scale(TypeColor(type), bright));
             SetNodeIcon(node, type, Scale(TypeColor(type), bright));
+            // Disabled nodes (not reachable, not the current spot) fade their baked art.
+            SetArtAlpha(node, (isOpen || isCurrent) ? 1f : 0.4f);
+            // Every node stays clickable (the drawer gates the action), so we no longer disable the
+            // button on locked nodes; only reachable nodes pulse.
             if (isOpen) PulseNode(node);
-            else DisableButton(node);
         }
 
         // Solo-mode map glyph reused per node type.
-        static string IconNameFor(string t)
+        internal static string IconNameFor(string t)
         {
             switch (t)
             {
@@ -543,8 +599,85 @@ namespace YgoMasterClient
             _graphicColor.GetSetMethod().Invoke(img, new IntPtr[] { new IntPtr(&col) });
         }
 
+        // Baked encounter art as an "RgArt" child behind the type glyph. Two specs:
+        //   card_<cid>     -> Texture2D illustration -> RawImage
+        //   profile_<id>   -> loaded "ProfileIcon<id>_L" sprite -> Image
+        static void SetNodeArt(IntPtr node, string iconImage)
+        {
+            if (string.IsNullOrEmpty(iconImage)) return;
+            try
+            {
+                if (iconImage.StartsWith("profile_"))
+                {
+                    IntPtr sprite = FindIcon("ProfileIcon" + iconImage.Substring(8) + "_L");
+                    if (sprite == IntPtr.Zero) return;
+                    IntPtr img = EnsureArt(node, _imageType);
+                    if (img != IntPtr.Zero) _imageSprite.GetSetMethod().Invoke(img, new IntPtr[] { sprite });
+                    return;
+                }
+                IntPtr tex = ResolveArtTexture(iconImage);
+                if (tex == IntPtr.Zero) return;
+                IntPtr ri = EnsureArt(node, _rawImageType);
+                if (ri != IntPtr.Zero) _rawImageTexture.GetSetMethod().Invoke(ri, new IntPtr[] { tex });
+            }
+            catch (Exception ex) { Console.WriteLine("[Roguelike] SetNodeArt EX: " + ex); }
+        }
+
+        // Ensure the masked "RgArt" container exists (RectMask2D with soft edges) carrying a child
+        // "RgArtImg" with the given graphic component; returns that graphic component.
+        static IntPtr EnsureArt(IntPtr node, IntPtr graphicType)
+        {
+            IntPtr art = GameObject.FindGameObjectByName(node, "RgArt");
+            if (art == IntPtr.Zero)
+            {
+                art = GameObject.New();
+                UnityObject.SetName(art, "RgArt");
+                GameObject.AddComponent(art, _rectType);
+                IntPtr mask = GameObject.AddComponent(art, _rectMask2DType);
+                Vec4 padding = new Vec4(0, 0, 0, 0);
+                Vec2Int softness = new Vec2Int(50, 50);
+                _maskPadding.GetSetMethod().Invoke(mask, new IntPtr[] { new IntPtr(&padding) });
+                _maskSoftness.GetSetMethod().Invoke(mask, new IntPtr[] { new IntPtr(&softness) });
+                Transform.SetParent(GameObject.GetTransform(art), GameObject.GetTransform(node));
+                PlaceNode(art, 0, 0, new AssetHelper.Vector2(104, 104));
+
+                IntPtr img = GameObject.New();
+                UnityObject.SetName(img, "RgArtImg");
+                GameObject.AddComponent(img, _rectType);
+                GameObject.AddComponent(img, graphicType);
+                Transform.SetParent(GameObject.GetTransform(img), GameObject.GetTransform(art));
+                PlaceNode(img, 0, 0, new AssetHelper.Vector2(104, 104));
+                return GameObject.GetComponent(img, graphicType);
+            }
+            IntPtr existing = GameObject.FindGameObjectByName(art, "RgArtImg");
+            return existing != IntPtr.Zero ? GameObject.GetComponent(existing, graphicType) : IntPtr.Zero;
+        }
+
+        // Fade the baked art for disabled nodes; full opacity for reachable/current.
+        static void SetArtAlpha(IntPtr node, float alpha)
+        {
+            IntPtr art = GameObject.FindGameObjectByName(node, "RgArt");
+            if (art == IntPtr.Zero) return;
+            IntPtr img = GameObject.FindGameObjectByName(art, "RgArtImg");
+            if (img == IntPtr.Zero) return;
+            IntPtr g = GameObject.GetComponent(img, _graphicType);
+            if (g == IntPtr.Zero) return;
+            Col c = new Col { r = 1f, g = 1f, b = 1f, a = alpha };
+            _graphicColor.GetSetMethod().Invoke(g, new IntPtr[] { new IntPtr(&c) });
+        }
+
+        // Texture for a card_<cid> spec via the game's ResourceManager: custom PNG in ClientData
+        // first, else the native MD bundle (has every card). Same path the Goat
+        // SoloChapterCardImage uses.
+        internal static IntPtr ResolveArtTexture(string iconImage)
+        {
+            if (iconImage.StartsWith("card_"))
+                return AssetHelper.LoadImmediateAsset("Card/Images/Illust/tcg/" + iconImage.Substring(5));
+            return IntPtr.Zero;
+        }
+
         // Find a loaded sprite by name (Solo atlas icons), cached after the first lookup.
-        static IntPtr FindIcon(string name)
+        internal static IntPtr FindIcon(string name)
         {
             IntPtr cached;
             if (_iconCache.TryGetValue(name, out cached) && cached != IntPtr.Zero) return cached;
@@ -567,7 +700,7 @@ namespace YgoMasterClient
         }
 
         // Base outline color per node type.
-        static Col TypeColor(string t)
+        internal static Col TypeColor(string t)
         {
             switch (t)
             {

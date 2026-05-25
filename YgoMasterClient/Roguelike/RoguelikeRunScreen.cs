@@ -384,15 +384,15 @@ namespace YgoMasterClient
             IntPtr btn = GameObject.FindGameObjectByPath(go, row + ".ButtonOpenDeckSearch");
             if (btn == IntPtr.Zero) { Console.WriteLine("[Roguelike] footer button not found"); return; }
             GameObject.SetActive(btn, true);
-            SetBindingText(btn, "TextTMP", "Abandonar Run");
+            SetBindingText(btn, "TextTMP", RoguelikeLabels.Get("run.abandon.button", "Abandonar Run"));
             WireButton(btn, OnAbandonClick);
         }
 
         static void OnAbandonClick()
         {
             YgomGame.Menu.CommonDialogViewController.OpenYesNoConfirmationDialog(
-                "Abandonar Run",
-                "Tem certeza? Todo o progresso da run atual será perdido.",
+                RoguelikeLabels.Get("run.abandon.title", "Abandonar Run"),
+                RoguelikeLabels.Get("run.abandon.msg", "Tem certeza? Todo o progresso da run atual será perdido."),
                 OnAbandonConfirmed);
         }
 

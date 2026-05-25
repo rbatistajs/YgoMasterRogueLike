@@ -493,6 +493,9 @@ namespace YgoMaster
                                     case "Roguelike.move":
                                         Act_RoguelikeMove(gameServerWebRequest);
                                         break;
+                                    case "Roguelike.save_deck":
+                                        Act_RoguelikeSaveDeck(gameServerWebRequest);
+                                        break;
                                     case "Roguelike.duel_result":
                                         Act_RoguelikeDuelResult(gameServerWebRequest);
                                         break;

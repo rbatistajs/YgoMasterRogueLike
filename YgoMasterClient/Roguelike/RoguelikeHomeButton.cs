@@ -136,8 +136,8 @@ namespace YgoMasterClient
             int maxAsc = RoguelikeApi.MaxAscension();
             if (maxAsc <= 0) { RoguelikeApi.StartRun(0); return; } // nothing to pick yet
             string[] options = new string[maxAsc + 1];
-            for (int i = 0; i <= maxAsc; i++) options[i] = "Ascensão " + i;
-            YgomGame.Menu.ActionSheetViewController.Open("Escolha a Ascensão", options, OnAscensionSelect);
+            for (int i = 0; i <= maxAsc; i++) options[i] = RoguelikeLabels.Get("home.ascension.option", "Ascensão {0}", i);
+            YgomGame.Menu.ActionSheetViewController.Open(RoguelikeLabels.Get("home.ascension.title", "Escolha a Ascensão"), options, OnAscensionSelect);
         }
 
         static void OnAscensionSelect(IntPtr ctx, int choice)

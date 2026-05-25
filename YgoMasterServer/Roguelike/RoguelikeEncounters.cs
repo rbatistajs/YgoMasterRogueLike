@@ -22,6 +22,7 @@ namespace YgoMaster
             public string Name;
             public string Text = "";
             public string Deck;
+            public string IconImage; // "card_<cid>" or "profile_<id>" — node art (baked types only)
             public Range Act = new Range();
             public Range Floor = new Range();
             public Range Ascension = new Range();
@@ -77,6 +78,7 @@ namespace YgoMaster
                 Deck = deck,
                 Name = Utils.GetValue<string>(d, "name", null),
                 Text = Utils.GetValue<string>(d, "text", ""),
+                IconImage = Utils.GetValue<string>(d, "icon_image", null),
                 Act = ParseRange(Utils.GetValue<Dictionary<string, object>>(d, "act")),
                 Floor = ParseRange(Utils.GetValue<Dictionary<string, object>>(d, "floor")),
                 Ascension = ParseRange(Utils.GetValue<Dictionary<string, object>>(d, "ascension")),
