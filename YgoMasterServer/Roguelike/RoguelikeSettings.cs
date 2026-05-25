@@ -29,6 +29,19 @@ namespace YgoMaster
         public static int Width(Dictionary<string, object> s) => Utils.GetValue<int>(s, "width", 4);
         public static int Paths(Dictionary<string, object> s) => Utils.GetValue<int>(s, "paths", 6);
 
+        // Node types whose encounter is chosen at map-gen ("baked": name + icon shown on the map ahead
+        // of the fight); other combat types pick lazily on arrival. mapGen.bakeTypes in Settings.json;
+        // default ["boss"] = legacy behavior. Passes through Effective (perAct/perAscension can replace).
+        public static HashSet<string> BakeTypes(Dictionary<string, object> s)
+        {
+            HashSet<string> set = new HashSet<string>();
+            Dictionary<string, object> mapGen = Utils.GetValue<Dictionary<string, object>>(s, "mapGen");
+            List<object> types = mapGen != null ? Utils.GetValue<List<object>>(mapGen, "bakeTypes") : null;
+            if (types == null) { set.Add("boss"); return set; }
+            foreach (object o in types) { string t = o as string; if (!string.IsNullOrEmpty(t)) set.Add(t); }
+            return set;
+        }
+
         // ----- acts / ascension -----
 
         public static int Acts(Dictionary<string, object> s) => Math.Max(1, Utils.GetValue<int>(s, "acts", 3));
@@ -42,13 +55,17 @@ namespace YgoMaster
             return 0.0;
         }
 
-        // Settings for a given act + ascension: base, deep-merged with perAscension[asc] then
-        // perAct[act] (act wins), then ascensionScale applied multiplicatively (× ascension).
+        // Settings for a given act + ascension: base, deep-merged with perAscension[asc], then
+        // perAct[act], then perAscension[asc].perAct[act] (most specific wins). Then ascensionScale
+        // applied multiplicatively (× ascension).
         public static Dictionary<string, object> Effective(Dictionary<string, object> baseSettings, int act, int ascension)
         {
             Dictionary<string, object> eff = DeepClone(baseSettings);
-            DeepMerge(eff, ItemAt(Utils.GetValue<List<object>>(baseSettings, "perAscension"), ascension));
-            DeepMerge(eff, ItemAt(Utils.GetValue<List<object>>(baseSettings, "perAct"), act));
+            Dictionary<string, object> asc = ItemAt(Utils.GetValue<List<object>>(baseSettings, "perAscension"), ascension);
+            DeepMerge(eff, asc);                                                               // 2: whole ascension
+            DeepMerge(eff, ItemAt(Utils.GetValue<List<object>>(baseSettings, "perAct"), act)); // 3: act, every ascension
+            if (asc != null)
+                DeepMerge(eff, ItemAt(Utils.GetValue<List<object>>(asc, "perAct"), act));      // 4: this act at this ascension (wins)
             if (ascension > 0)
                 ApplyScale(eff, Utils.GetValue<Dictionary<string, object>>(baseSettings, "ascensionScale"), ascension);
             return eff;
@@ -136,6 +153,13 @@ namespace YgoMaster
         public static Dictionary<string, object> ForcedRows(Dictionary<string, object> s)
         {
             return Utils.GetValue<Dictionary<string, object>>(s, "forcedRows") ?? new Dictionary<string, object>();
+        }
+
+        // Per-type node-count bounds for an act map: { "<type>": { "min", "max" } } (counted over
+        // the whole map). Empty = none. Passes through Effective (perAct/perAscension/nested can set it).
+        public static Dictionary<string, object> TypeCounts(Dictionary<string, object> s)
+        {
+            return Utils.GetValue<Dictionary<string, object>>(s, "typeCounts") ?? new Dictionary<string, object>();
         }
 
         // ----- combat LP -----

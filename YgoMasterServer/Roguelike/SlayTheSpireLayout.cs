@@ -48,6 +48,7 @@ namespace YgoMaster
             for (int r = 0; r < floors; r++)
                 for (int c = 0; c < width; c++)
                     if (grid[r, c] != null) map.Nodes.Add(grid[r, c]);
+            policy.EnforceCounts(map.Nodes, rng); // bound per-type counts after the full set exists
             return map;
         }
 
