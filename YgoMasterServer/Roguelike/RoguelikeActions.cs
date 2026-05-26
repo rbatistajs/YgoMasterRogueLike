@@ -63,8 +63,11 @@ namespace YgoMaster
             return node;
         }
 
-        // Walk an action tree and resolve `option.action` (for `options` kind) and `next`
-        // (for `openpack` kind) when they are strings. In-place mutation of `node`.
+        // Walk an action tree and resolve every `next` (the universal continuation key) when it
+        // is a string. In-place mutation of `node`. Applies to:
+        //   - `options[i].next` (the action that follows when option i is chosen)
+        //   - `openpack.next`   (the action that follows after the pack is finalized)
+        //   - `message.next`    (the action that follows after the OK is acknowledged)
         static void ResolveTreeInPlace(Dictionary<string, object> node, Dictionary<string, Dictionary<string, object>> lib, HashSet<string> visiting)
         {
             if (node == null) return;
@@ -79,18 +82,18 @@ namespace YgoMaster
                         Dictionary<string, object> od = o as Dictionary<string, object>;
                         if (od == null) continue;
                         object sub;
-                        if (od.TryGetValue("action", out sub))
-                            od["action"] = Resolve(sub, lib, visiting);
+                        if (od.TryGetValue("next", out sub))
+                            od["next"] = Resolve(sub, lib, visiting);
                     }
                 }
             }
-            else if (type == "openpack")
+            else
             {
+                // openpack / message / unknown kinds: all may carry `next` as a continuation.
                 object nxt;
                 if (node.TryGetValue("next", out nxt))
                     node["next"] = Resolve(nxt, lib, visiting);
             }
-            // message has no nested actions.
         }
     }
 }

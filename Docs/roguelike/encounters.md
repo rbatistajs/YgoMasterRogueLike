@@ -226,22 +226,26 @@ An encounter's `action` is a tree of action nodes the server walks after the enc
 
 | `type` | What it does |
 |---|---|
-| `options` | Branch — show a list of labeled choices; player picks one and the engine descends into that option's nested `action`. |
-| `message` | Terminal — show text with a single OK; completes the action when dismissed. |
-| `openpack` | Open one or more packs of cards with weighted draws and pity, then either keep all or pick X of N. Adds the resolved cards to the run's pool / deck. |
+| `options` | Branch — show a list of labeled choices; player picks one and the engine descends into that option's `next`. |
+| `message` | Show text with a single OK; advances to `next` (or completes when `next` is null/missing). |
+| `openpack` | Open one or more packs of cards with weighted draws and pity, then either keep all or pick X of N. Adds the resolved cards to the run's pool / deck, then advances to `next`. |
 
 ```json
 "action": {
   "type": "options",
   "text": "Um viajante oferece uma escolha…",
   "options": [
-    { "label": "Abrir o baú", "action": { "type": "message", "text": "Você pegou uma carta." } },
-    { "label": "Seguir",      "action": null }
+    { "label": "Abrir o baú", "next": { "type": "message", "text": "Você pegou uma carta." } },
+    { "label": "Seguir",      "next": null }
   ]
 }
 ```
 
-An option whose `action` is `null` ends the tree immediately. Trees can nest arbitrarily.
+**Continuations use `next`.** Inside an action tree, every node may have a `next` field that
+points to the action that follows: `option.next` (per branch under `options`), `openpack.next`
+(after the pack is finalized), and `message.next` (after the OK is acknowledged). The top-level
+field on an encounter is `action` (the entry point); everything inside is chained with `next`.
+An option whose `next` is `null` or missing ends the tree.
 
 ### `openpack`
 
@@ -267,7 +271,7 @@ An option whose `action` is `null` ends the tree immediately. Trees can nest arb
   "title_pick":    "Selecione {0} de {1} cartas",
   "confirm_label": "Confirmar",
 
-  // Next action (same shape as an option's nested action); null ends the tree.
+  // Next action after the player confirms; same shape as `option.next`. Null/missing ends the tree.
   "next": null
 }
 ```
@@ -319,8 +323,8 @@ may be used instead of the inline object — the loader looks it up by name.
     "type": "options",
     "text": "Um baú trancado…",
     "options": [
-      { "label": "Abrir", "action": "smallReward" },
-      { "label": "Seguir", "action": null }
+      { "label": "Abrir", "next": "smallReward" },
+      { "label": "Seguir", "next": null }
     ]
   }
 }
@@ -340,8 +344,9 @@ Then in `Encounters.json`:
   engine only reads, never mutates.
 - **Strict refs.** A string that doesn't exist in `Actions.json` fails the encounter's load
   (logged and skipped). Same goes for cycles (`A → next: B → next: A`).
-- **Nested refs.** Inside an action tree, `option.action` and `openpack.next` may also be strings;
-  they're resolved recursively. `null` and missing keys both end that branch.
+- **Nested refs.** Inside an action tree, every `next` (under `options[i]`, `openpack`, or
+  `message`) may also be a string; they're resolved recursively. `null` and missing keys both end
+  that branch.
 - **Optional file.** No `Actions.json` = only inline trees and `null` work — nothing else changes.
 
 ### Type defaults (`defaultAction`)

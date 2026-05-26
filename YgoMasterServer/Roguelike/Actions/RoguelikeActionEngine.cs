@@ -33,11 +33,15 @@ namespace YgoMaster
                 List<object> opts = Utils.GetValue<List<object>>(cur, "options");
                 Dictionary<string, object> chosen = (opts != null && choice >= 0 && choice < opts.Count)
                     ? opts[choice] as Dictionary<string, object> : null;
-                SetPending(run, chosen != null ? Utils.GetValue<Dictionary<string, object>>(chosen, "action") : null);
+                SetPending(run, chosen != null ? Utils.GetValue<Dictionary<string, object>>(chosen, "next") : null);
+            }
+            else if (type == "message")
+            {
+                SetPending(run, Utils.GetValue<Dictionary<string, object>>(cur, "next"));
             }
             else
             {
-                SetPending(run, null); // message OK (or unknown) -> done
+                SetPending(run, null); // unknown -> done
             }
             Step(run, dataDirectory, regulation);
         }

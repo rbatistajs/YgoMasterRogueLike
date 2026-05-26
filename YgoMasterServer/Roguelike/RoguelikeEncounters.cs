@@ -205,13 +205,17 @@ namespace YgoMaster
                     {
                         Dictionary<string, object> od = o as Dictionary<string, object>;
                         if (od == null) throw new Exception("options: each option must be object");
-                        Dictionary<string, object> sub = Utils.GetValue<Dictionary<string, object>>(od, "action");
+                        Dictionary<string, object> sub = Utils.GetValue<Dictionary<string, object>>(od, "next");
                         if (sub != null) ValidateActionNode(sub);
                     }
                     return;
                 }
                 case "message":
-                    return; // no required fields beyond type
+                {
+                    Dictionary<string, object> nxt = Utils.GetValue<Dictionary<string, object>>(node, "next");
+                    if (nxt != null) ValidateActionNode(nxt);
+                    return;
+                }
                 case "openpack":
                 {
                     int packs = Utils.GetValue<int>(node, "packs", 1);
