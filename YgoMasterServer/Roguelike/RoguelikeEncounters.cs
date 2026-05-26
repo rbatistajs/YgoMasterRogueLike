@@ -93,6 +93,11 @@ namespace YgoMaster
             };
             object w; if (d.TryGetValue("weight", out w)) { try { e.Weight = Convert.ToDouble(w); } catch { } }
             if (string.IsNullOrEmpty(e.Name)) e.Name = Path.GetFileNameWithoutExtension(deck);
+            if (e.Action != null)
+            {
+                try { ValidateActionNode(e.Action); }
+                catch (Exception ex) { Console.WriteLine("[Roguelike] encounter '" + id + "' action invalid: " + ex.Message); return null; }
+            }
             return e;
         }
 
@@ -153,6 +158,103 @@ namespace YgoMaster
                 foreach (Encounter e in kv.Value)
                     if (e.Id == id) return e;
             return null;
+        }
+
+        // Validate an action node tree recursively; throws on first error.
+        // Action nodes use `type` (matching RoguelikeActionEngine).
+        static void ValidateActionNode(Dictionary<string, object> node)
+        {
+            if (node == null) return;
+            string type = Utils.GetValue<string>(node, "type", "");
+            switch (type)
+            {
+                case "options":
+                {
+                    List<object> opts = Utils.GetValue<List<object>>(node, "options");
+                    if (opts == null || opts.Count == 0) throw new Exception("options: options list required");
+                    foreach (object o in opts)
+                    {
+                        Dictionary<string, object> od = o as Dictionary<string, object>;
+                        if (od == null) throw new Exception("options: each option must be object");
+                        Dictionary<string, object> sub = Utils.GetValue<Dictionary<string, object>>(od, "action");
+                        if (sub != null) ValidateActionNode(sub);
+                    }
+                    return;
+                }
+                case "message":
+                    return; // no required fields beyond type
+                case "openpack":
+                {
+                    int packs = Utils.GetValue<int>(node, "packs", 1);
+                    if (packs < 1) throw new Exception("openpack: packs must be >= 1");
+                    int pick = Utils.GetValue<int>(node, "pick", 0);
+                    if (pick < 0) throw new Exception("openpack: pick must be >= 0");
+
+                    List<object> pulls = Utils.GetValue<List<object>>(node, "pulls");
+                    if (pulls == null || pulls.Count == 0) throw new Exception("openpack: pulls required");
+                    int sizePerPack = 0;
+                    foreach (object pullObj in pulls)
+                    {
+                        Dictionary<string, object> pull = pullObj as Dictionary<string, object>;
+                        if (pull == null) throw new Exception("openpack: pull entry must be object");
+                        int count = Utils.GetValue<int>(pull, "count", 0);
+                        if (count < 1) throw new Exception("openpack: pull.count must be >= 1");
+                        double chance = Utils.GetValue<double>(pull, "chance", 1.0);
+                        if (chance < 0 || chance > 1) throw new Exception("openpack: pull.chance must be in [0,1]");
+                        Dictionary<string, object> pool = Utils.GetValue<Dictionary<string, object>>(pull, "pool");
+                        if (pool == null) throw new Exception("openpack: pull.pool required");
+                        ValidatePackPool(pool);
+                        sizePerPack += count;
+                    }
+                    int sizeTotal = sizePerPack * packs;
+                    if (pick > sizeTotal) throw new Exception("openpack: pick (" + pick + ") > total size (" + sizeTotal + ")");
+
+                    // pity: false | { rarityKey: {...} }
+                    object pityRaw;
+                    if (node.TryGetValue("pity", out pityRaw) && pityRaw != null)
+                    {
+                        if (pityRaw is bool && (bool)pityRaw == true)
+                            throw new Exception("openpack: pity:true is invalid; use false to disable or omit to inherit global");
+                        if (!(pityRaw is bool))
+                        {
+                            Dictionary<string, object> pity = pityRaw as Dictionary<string, object>;
+                            if (pity == null) throw new Exception("openpack: pity must be object or false");
+                            foreach (KeyValuePair<string, object> kv in pity)
+                                if (RoguelikeCardPool.RarityKey(kv.Key) <= 0) throw new Exception("openpack: pity rarity key invalid: " + kv.Key);
+                        }
+                    }
+
+                    Dictionary<string, object> nxt = Utils.GetValue<Dictionary<string, object>>(node, "next");
+                    if (nxt != null) ValidateActionNode(nxt);
+                    return;
+                }
+                default:
+                    // Unknown types are tolerated (engine treats them as terminal no-ops).
+                    return;
+            }
+        }
+
+
+        // Validate the pool spec inside an openpack pull (type checks only; optional fields).
+        static void ValidatePackPool(Dictionary<string, object> pool)
+        {
+            object v;
+            if (pool.TryGetValue("rarityRates", out v))
+            {
+                Dictionary<string, object> rr = v as Dictionary<string, object>;
+                if (rr == null) throw new Exception("openpack pool.rarityRates must be object");
+                foreach (KeyValuePair<string, object> kv in rr)
+                    if (RoguelikeCardPool.RarityKey(kv.Key) <= 0) throw new Exception("openpack pool.rarityRates key invalid: " + kv.Key);
+            }
+            if (pool.TryGetValue("rarity", out v) && RoguelikeCardPool.RarityKey(Convert.ToString(v)) <= 0)
+                throw new Exception("openpack pool.rarity invalid: " + v);
+            if (pool.TryGetValue("rarities", out v))
+            {
+                List<object> rs = v as List<object>;
+                if (rs == null) throw new Exception("openpack pool.rarities must be array");
+                foreach (object o in rs)
+                    if (RoguelikeCardPool.RarityKey(Convert.ToString(o)) <= 0) throw new Exception("openpack pool.rarities entry invalid: " + o);
+            }
         }
     }
 }

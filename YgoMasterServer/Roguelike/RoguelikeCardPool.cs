@@ -42,11 +42,15 @@ namespace YgoMaster
         public static bool Matches(string dataDirectory, int cid, Dictionary<string, object> spec)
         {
             YdkHelper.GameCardInfo c;
-            if (!Cards(dataDirectory).TryGetValue(cid, out c) || !c.Exist) return false;
+            // NOTE: do NOT gate on c.Exist — in mod installs with a curated CardList.json, many real
+            // playable cards have Exist=false in the binary (it's a legacy/cosmetic flag). The actual
+            // data integrity is enforced by PassesKind/Numeric below (which reject empty/zeroed slots).
+            if (!Cards(dataDirectory).TryGetValue(cid, out c)) return false;
             if (!PassesKind(Utils.GetValue<string>(spec, "random"), c)) return false;
             string subtype = Utils.GetValue<string>(spec, "subtype");
             if (!string.IsNullOrEmpty(subtype) && !PassesSubtype(subtype.ToLowerInvariant(), c)) return false;
             if (c.IsMonster && !PassesNumeric(spec, c)) return false;
+            if (!PassesRarity(spec, cid, dataDirectory)) return false;
             return true;
         }
 
@@ -105,6 +109,32 @@ namespace YgoMaster
             if (TryInt(spec, "minLevel", out v) && c.Level < v) return false;
             if (TryInt(spec, "maxLevel", out v) && c.Level > v) return false;
             return true;
+        }
+
+        // "rarity": "UR" / "rarities": ["SR","UR"]. None = no filter.
+        static bool PassesRarity(Dictionary<string, object> spec, int cid, string dataDirectory)
+        {
+            if (spec == null) return true;
+            HashSet<int> allowed = null;
+            object single, multi;
+            if (spec.TryGetValue("rarity", out single) && single != null)
+            {
+                int r = RarityKey(Convert.ToString(single));
+                if (r > 0) { allowed = new HashSet<int>(); allowed.Add(r); }
+            }
+            if (spec.TryGetValue("rarities", out multi) && multi is List<object>)
+            {
+                if (allowed == null) allowed = new HashSet<int>();
+                foreach (object o in (List<object>)multi)
+                {
+                    int r = RarityKey(Convert.ToString(o));
+                    if (r > 0) allowed.Add(r);
+                }
+            }
+            if (allowed == null || allowed.Count == 0) return true;
+            int rarity;
+            if (!CardListRarity(dataDirectory).TryGetValue(cid, out rarity)) return false;
+            return allowed.Contains(rarity);
         }
 
         static bool TryInt(Dictionary<string, object> d, string key, out int value)
@@ -178,6 +208,14 @@ namespace YgoMaster
             return pool;
         }
 
+        // True if this cid is an Extra Deck card (fusion/synchro/xyz/link), using the cached card data.
+        // Returns false (Main) for unknown cids.
+        public static bool IsCardExtraDeck(string dataDirectory, int cid)
+        {
+            YdkHelper.GameCardInfo info;
+            return Cards(dataDirectory).TryGetValue(cid, out info) && info.IsExtraDeck;
+        }
+
         static void ApplyIncludeExclude(HashSet<int> pool, List<object> include, List<object> exclude)
         {
             if (include != null) foreach (object o in include) { int c; if (TryCid(o, out c)) pool.Add(c); }
@@ -231,6 +269,16 @@ namespace YgoMaster
         class WeightCtx { public Dictionary<int, double> RarityRate; public Dictionary<int, double> GroupMult; }
         static readonly Dictionary<int, WeightCtx> _weightByAsc = new Dictionary<int, WeightCtx>();
 
+        public class PityConfig
+        {
+            public double Increment;          // bonus added to effective rarityRate per miss
+            public double Max;                // cap on the accumulated bonus
+            public HashSet<int> ResetOn;      // rarities (1..4) that zero this counter when pulled
+        }
+
+        class PityCtx { public Dictionary<int, PityConfig> ByRarity = new Dictionary<int, PityConfig>(); }
+        static readonly Dictionary<int, PityCtx> _pityByAsc = new Dictionary<int, PityCtx>();
+
         static WeightCtx Weights(string dataDirectory, int ascension)
         {
             WeightCtx cached;
@@ -253,18 +301,166 @@ namespace YgoMaster
             return ctx;
         }
 
+        // Snapshot of the rarityRates merged from global + per-ascension config (no action override).
+        public static Dictionary<int, double> LayeredRarityRates(string dataDirectory, int ascension)
+        {
+            return new Dictionary<int, double>(Weights(dataDirectory, ascension).RarityRate);
+        }
+
+        public static Dictionary<int, PityConfig> Pity(string dataDirectory, int ascension)
+        {
+            PityCtx cached;
+            if (_pityByAsc.TryGetValue(ascension, out cached)) return cached.ByRarity;
+
+            PityCtx ctx = new PityCtx();
+            Dictionary<string, object> cfg = PoolConfig(dataDirectory);
+            if (cfg != null)
+            {
+                ParsePity(ctx.ByRarity, Utils.GetValue<Dictionary<string, object>>(cfg, "pity"));
+                Dictionary<string, object> asc = ItemAt(Utils.GetValue<List<object>>(cfg, "byAscension"), ascension);
+                if (asc != null) ParsePity(ctx.ByRarity, Utils.GetValue<Dictionary<string, object>>(asc, "pity"));
+            }
+            _pityByAsc[ascension] = ctx;
+            return ctx.ByRarity;
+        }
+
+        static void ParsePity(Dictionary<int, PityConfig> into, Dictionary<string, object> raw)
+        {
+            if (raw == null) return;
+            foreach (KeyValuePair<string, object> kv in raw)
+            {
+                int r = RarityKey(kv.Key);
+                if (r <= 0) continue;
+                Dictionary<string, object> entry = kv.Value as Dictionary<string, object>;
+                if (entry == null) continue;
+                PityConfig pc;
+                if (!into.TryGetValue(r, out pc)) pc = new PityConfig { Increment = 0, Max = 0, ResetOn = new HashSet<int> { r } };
+                // per-field merge:
+                object v;
+                if (entry.TryGetValue("increment", out v)) { try { pc.Increment = Convert.ToDouble(v); } catch { } }
+                if (entry.TryGetValue("max", out v))       { try { pc.Max = Convert.ToDouble(v); } catch { } }
+                List<object> rs = Utils.GetValue<List<object>>(entry, "reset_on");
+                if (rs != null)
+                {
+                    HashSet<int> set = new HashSet<int>();
+                    foreach (object o in rs)
+                    {
+                        int rr = RarityKey(Convert.ToString(o));
+                        if (rr > 0) set.Add(rr);
+                    }
+                    if (set.Count > 0) pc.ResetOn = set;
+                }
+                into[r] = pc;
+            }
+        }
+
         // Selection weight of cid at an ascension: rarityRate(rarity) × ∏(group rates). Default 1.
-        public static double Weight(string dataDirectory, int cid, int ascension)
+        // Optional rarityRatesOverride replaces global+asc rarityRate per key (used by openpack pulls).
+        public static double Weight(string dataDirectory, int cid, int ascension,
+            Dictionary<int, double> rarityRatesOverride = null)
         {
             WeightCtx ctx = Weights(dataDirectory, ascension);
             double w = 1.0;
             int rarity;
             if (CardListRarity(dataDirectory).TryGetValue(cid, out rarity))
             {
-                double rr; if (ctx.RarityRate.TryGetValue(rarity, out rr)) w *= rr;
+                double rr;
+                if (rarityRatesOverride != null && rarityRatesOverride.TryGetValue(rarity, out rr))
+                    w *= rr;
+                else if (ctx.RarityRate.TryGetValue(rarity, out rr))
+                    w *= rr;
             }
             double gm; if (ctx.GroupMult.TryGetValue(cid, out gm)) w *= gm;
             return w;
+        }
+
+        public class DrawResult
+        {
+            public int Cid;
+            public int Rarity;       // 1..4 from CardListRarity
+            public bool IsNew;       // always true in roguelike (client decides visual)
+            public int PremiumType;  // 0 in v1
+        }
+
+        // Draw n unique cids (within this call) that match spec from pool.
+        // pool     = universe (caller provides via AnyPool/Deck/Link).
+        // used     = anti-dup set (caller-owned; DrawN appends picked cids).
+        // rarityRatesOverride (optional) = replaces global+asc rarityRate per key.
+        // weighted = true for weighted pick (source any/link); false for uniform (deck).
+        // Returns empty list if it can't fill; caller validates.
+        // Partial draws (< n) are possible when all remaining candidates have weight 0.
+        public static List<DrawResult> DrawN(
+            string dataDirectory,
+            HashSet<int> pool,
+            Dictionary<string, object> spec,
+            int n,
+            Random rng,
+            int ascension,
+            HashSet<int> used,
+            Dictionary<int, double> rarityRatesOverride,
+            bool weighted)
+        {
+            List<DrawResult> result = new List<DrawResult>();
+            if (pool == null || n <= 0 || rng == null || used == null) return result;
+
+            Dictionary<int, int> rarityMap = CardListRarity(dataDirectory);
+
+            List<int> cands = new List<int>();
+            int passedExist = 0, passedKind = 0;
+            int sampleFromPool = -1, sampleInCards = -1;
+            var allCards = Cards(dataDirectory);
+            foreach (int cid in pool)
+            {
+                if (sampleFromPool == -1) sampleFromPool = cid; // first cid of pool, for diag
+                if (used.Contains(cid)) continue;
+                // diag: split the filter so we know which step kills the candidates
+                YdkHelper.GameCardInfo c;
+                if (!allCards.TryGetValue(cid, out c)) continue;
+                passedExist++;
+                if (!PassesKind(Utils.GetValue<string>(spec, "random"), c)) continue;
+                passedKind++;
+                if (Matches(dataDirectory, cid, spec)) cands.Add(cid);
+            }
+            foreach (var kv in allCards) { sampleInCards = kv.Key; break; }
+            // Probe the first cid of the pool: is it in Cards? Exist? IsMonster?
+            YdkHelper.GameCardInfo probe;
+            bool inCards = allCards.TryGetValue(sampleFromPool, out probe);
+            Console.WriteLine("[Roguelike] DrawN filter: pool=" + pool.Count + " cardsDict=" + allCards.Count
+                + " samplePoolCid=" + sampleFromPool + " sampleCardsCid=" + sampleInCards
+                + " probeInCards=" + inCards + " probeExist=" + (inCards ? probe.Exist.ToString() : "n/a")
+                + " probeIsMonster=" + (inCards ? probe.IsMonster.ToString() : "n/a")
+                + " probeFrame=" + (inCards ? probe.Frame.ToString() : "n/a")
+                + " passedExist=" + passedExist + " passedKind=" + passedKind + " matched=" + cands.Count);
+            if (cands.Count == 0) return result;
+
+            for (int draw = 0; draw < n && cands.Count > 0; draw++)
+            {
+                int pickIdx;
+                if (weighted)
+                {
+                    double[] w = new double[cands.Count];
+                    double total = 0;
+                    for (int i = 0; i < cands.Count; i++)
+                    {
+                        w[i] = Math.Max(0, Weight(dataDirectory, cands[i], ascension, rarityRatesOverride));
+                        total += w[i];
+                    }
+                    if (total <= 0) break;
+                    double roll = rng.NextDouble() * total;
+                    pickIdx = cands.Count - 1;
+                    for (int i = 0; i < cands.Count; i++) { roll -= w[i]; if (roll <= 0) { pickIdx = i; break; } }
+                }
+                else
+                {
+                    pickIdx = rng.Next(cands.Count);
+                }
+                int picked = cands[pickIdx];
+                cands.RemoveAt(pickIdx);
+                used.Add(picked);
+                int rarity; rarityMap.TryGetValue(picked, out rarity);
+                result.Add(new DrawResult { Cid = picked, Rarity = rarity, IsNew = true, PremiumType = 0 });
+            }
+            return result;
         }
 
         static void ParseRarityRates(Dictionary<int, double> into, Dictionary<string, object> rates)
@@ -279,7 +475,7 @@ namespace YgoMaster
             }
         }
 
-        static int RarityKey(string k)
+        public static int RarityKey(string k)
         {
             switch ((k ?? "").ToUpperInvariant())
             {

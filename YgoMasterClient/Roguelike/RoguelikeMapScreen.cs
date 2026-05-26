@@ -60,6 +60,7 @@ namespace YgoMasterClient
         static IL2Field _tpRtrans, _tpFrom, _tpTo;
         static IntPtr _go;       // the current map VC GameObject (for in-place refresh)
         static IL2Method _activeInHierarchy; // GameObject.activeInHierarchy getter (refresh gate)
+        static IL2Method _objAlive;          // UnityEngine.Object.op_Implicit(Object)->bool (destroyed-object guard)
         static bool _refreshPending;         // refresh once the map is on-screen again (post-duel)
         static IntPtr _tmpType;  // ExtendedTextMeshProUGUI (LP label text)
         static IntPtr _bossLabelSrc; // NameText TMP cloned as the per-node (boss) name-label template
@@ -168,6 +169,7 @@ namespace YgoMasterClient
                 _graphicType = graphic.IL2Typeof();
                 _graphicColor = graphic.GetProperty("color");
                 _activeInHierarchy = core.GetClass("GameObject", "UnityEngine").GetProperty("activeInHierarchy").GetGetMethod();
+                _objAlive = core.GetClass("Object", "UnityEngine").GetMethod("op_Implicit", x => x.GetParameters().Length == 1);
                 _tmpType = CastUtils.IL2Typeof("ExtendedTextMeshProUGUI", "YgomSystem.YGomTMPro", "Assembly-CSharp");
                 _ready = true;
             }
@@ -217,9 +219,20 @@ namespace YgoMasterClient
         // immediate Refresh would rebuild stale/invisible nodes. Defer until it re-appears.
         public static void MarkDirty() { _refreshPending = true; }
 
+        // A destroyed Unity object keeps a non-null IL2CPP wrapper but a dead native ptr, so a raw
+        // "== Zero" check passes and activeInHierarchy then NREs. op_Implicit is the Unity-safe
+        // aliveness test (reads the cached native ptr without dereferencing it).
+        static bool IsAlive(IntPtr go)
+        {
+            if (go == IntPtr.Zero) return false;
+            if (_objAlive == null) return true; // can't test -> assume alive (pre-fix behavior)
+            IL2Object a = _objAlive.Invoke(new IntPtr[] { go });
+            return a != null && a.GetValueRef<csbool>();
+        }
+
         static bool IsActive(IntPtr go)
         {
-            if (go == IntPtr.Zero || _activeInHierarchy == null) return false;
+            if (!IsAlive(go) || _activeInHierarchy == null) return false;
             IL2Object r = _activeInHierarchy.Invoke(go);
             return r != null && r.GetValueRef<csbool>();
         }
@@ -228,6 +241,8 @@ namespace YgoMasterClient
         // the delay elapses (acts like a coroutine WaitForSeconds).
         public static void Update()
         {
+            // The map VC was destroyed (left the screen): drop the dangling pointer so we stop poking it.
+            if (_go != IntPtr.Zero && !IsAlive(_go)) _go = IntPtr.Zero;
             // Pending post-duel refresh: apply only once the map is visible again (fresh ClientWork).
             if (_refreshPending && IsActive(_go))
             {
@@ -237,6 +252,8 @@ namespace YgoMasterClient
             // Open a pending action prompt only while the map is on screen (mirrors the pending-duel
             // gate). Token dedup keeps it from re-opening; resolved/chained prompts advance here too.
             if (IsActive(_go)) RoguelikeActionDriver.Pump();
+            if (IsActive(_go)) RoguelikePackDriver.Pump();
+            RoguelikePackResultHook.EnsureRegistered();
             if (!_scrollPending || DateTime.UtcNow < _scrollDueAt) return;
             _scrollPending = false;
             // Recompute the target now: the viewport height was 0 at build time (layout not settled).

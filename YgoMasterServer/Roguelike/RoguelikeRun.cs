@@ -28,6 +28,8 @@ namespace YgoMaster
         public bool Won;                            // set when the final act's boss falls
         public Dictionary<string, object> PendingAction; // current action-tree node awaiting resolution, or null
         public int ActionToken;                     // bumps each time a new prompt is presented (client dedup)
+        public Dictionary<string, int> Pity;            // per-rarity miss counter ({"UR":7, "SR":2}); grows uncapped, capped in Weight
+        public Dictionary<string, object> PendingPack;  // staged pack awaiting finalize; null when none
 
         public Dictionary<string, object> ToDictionary()
         {
@@ -52,6 +54,8 @@ namespace YgoMaster
                 { "won", Won },
                 { "pendingAction", PendingAction },
                 { "actionToken", ActionToken },
+                { "pity",         Pity ?? new Dictionary<string, int>() },
+                { "pendingPack",  PendingPack },
             };
         }
 
@@ -82,6 +86,8 @@ namespace YgoMaster
                 Won        = Utils.GetValue<bool>(d, "won", false),
                 PendingAction = Utils.GetValue<Dictionary<string, object>>(d, "pendingAction"),
                 ActionToken   = Utils.GetValue<int>(d, "actionToken", 0),
+                Pity         = ParsePity(Utils.GetValue<Dictionary<string, object>>(d, "pity")),
+                PendingPack  = Utils.GetValue<Dictionary<string, object>>(d, "pendingPack"),
             };
         }
 
@@ -109,6 +115,19 @@ namespace YgoMaster
                 { "p_n", p_n }, { "p_p1n", p_p1n }, { "p_p2n", p_p2n },
                 { "tn", n + p1n + p2n + p_n + p_p1n + p_p2n },
             };
+        }
+
+        // MiniJSON deserializes the "pity" object's values as boxed objects; coerce to int here.
+        static Dictionary<string, int> ParsePity(Dictionary<string, object> raw)
+        {
+            Dictionary<string, int> r = new Dictionary<string, int>();
+            if (raw == null) return r;
+            foreach (KeyValuePair<string, object> kv in raw)
+            {
+                int v; try { v = Convert.ToInt32(kv.Value); } catch { continue; }
+                r[kv.Key] = v;
+            }
+            return r;
         }
 
         public static string PathFor(string playerDir) => Path.Combine(playerDir, "roguelike.json");

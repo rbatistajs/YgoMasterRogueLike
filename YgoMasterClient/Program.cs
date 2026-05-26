@@ -333,6 +333,7 @@ namespace YgoMasterClient
                 nativeTypes.Add(typeof(RoguelikeApi));
                 nativeTypes.Add(typeof(RoguelikeRunScreen));
                 nativeTypes.Add(typeof(RoguelikeMapScreen));
+                nativeTypes.Add(typeof(RoguelikePackResultHook));
                 nativeTypes.Add(typeof(YgomGame.Duel.DuelTutorialSetting));
                 nativeTypes.Add(typeof(YgomGame.Tutorial.CardFlyingViewController));
                 nativeTypes.Add(typeof(YgomGame.Utility.ItemUtil));

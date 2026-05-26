@@ -250,6 +250,17 @@ namespace YgoMasterClient
             public string[] Options; // option labels (empty for message)
         }
 
+        public class PendingPack
+        {
+            public int Token;
+            public string Mode;     // "keep" | "pick"
+            public int Pick;
+            public int Size;
+            public Labels TextLabels;
+            public class Labels { public string TitleKeep; public string TitlePick; public string Confirm; }
+        }
+        static string _lastPendingPackJson; // diag dedup so the per-frame log doesn't spam
+
         // Current server action prompt ($.Roguelike.action), or null when nothing is pending.
         public static ActionPrompt GetActionPrompt()
         {
@@ -278,6 +289,46 @@ namespace YgoMasterClient
             catch (Exception ex) { Console.WriteLine("[Roguelike] GetActionPrompt EX: " + ex); return null; }
         }
 
+        // Pending card pack state ($.Roguelike.pendingPack), or null when none active.
+        public static PendingPack GetPendingPack()
+        {
+            try
+            {
+                string json = YgomSystem.Utility.ClientWork.SerializePath("Roguelike.pendingPack");
+                if (string.IsNullOrEmpty(json)) return null;
+                // log only when payload changes (per-frame call is intentional but log would spam)
+                if (json != _lastPendingPackJson)
+                {
+                    _lastPendingPackJson = json;
+                    Console.WriteLine("[Roguelike] GetPendingPack: json=" + (json.Length > 200 ? json.Substring(0, 200) + "..." : json));
+                }
+                Dictionary<string, object> d = MiniJSON.Json.Deserialize(json) as Dictionary<string, object>;
+                if (d == null) return null;
+                Dictionary<string, object> lab = d.ContainsKey("labels") ? d["labels"] as Dictionary<string, object> : null;
+                return new PendingPack
+                {
+                    Token = Convert.ToInt32(d.ContainsKey("token") ? d["token"] : 0),
+                    Mode  = d.ContainsKey("mode")  ? Convert.ToString(d["mode"]) : "keep",
+                    Pick  = Convert.ToInt32(d.ContainsKey("pick") ? d["pick"] : 0),
+                    Size  = Convert.ToInt32(d.ContainsKey("size") ? d["size"] : 0),
+                    TextLabels = new PendingPack.Labels
+                    {
+                        // Priority: action spec -> Labels.json -> "" (no override; vanilla preserved).
+                        TitleKeep = lab != null && lab.ContainsKey("title_keep")
+                            ? Convert.ToString(lab["title_keep"])
+                            : RoguelikeLabels.Get("pack.title.keep", ""),
+                        TitlePick = lab != null && lab.ContainsKey("title_pick")
+                            ? Convert.ToString(lab["title_pick"])
+                            : RoguelikeLabels.Get("pack.title.pick", ""),
+                        Confirm   = lab != null && lab.ContainsKey("confirm")
+                            ? Convert.ToString(lab["confirm"])
+                            : RoguelikeLabels.Get("pack.confirm", ""),
+                    }
+                };
+            }
+            catch (Exception ex) { Console.WriteLine("[Roguelike] GetPendingPack EX: " + ex); return null; }
+        }
+
         // Dev/test: run encounter <id>'s action through the server engine.
         public static void RunEncounterAction(string id)
         {
@@ -287,6 +338,16 @@ namespace YgoMasterClient
         public static void ActionRespond(int choice)
         {
             Call("Roguelike.action_respond", new Dictionary<string, object> { { "choice", choice } });
+        }
+        // Finalize a pending card pack with the player's picks.
+        public static void PackFinalize(int token, int[] picks)
+        {
+            Dictionary<string, object> p = new Dictionary<string, object>
+            {
+                { "token", token },
+                { "picks", picks }
+            };
+            Call("Roguelike.pack_finalize", p);
         }
 
         // ----- combat (M4) -----

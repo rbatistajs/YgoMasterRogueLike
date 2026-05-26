@@ -105,34 +105,15 @@ namespace YgoMaster
                 if (!hasRandom || Rng == null) return null;
                 HashSet<int> pool = BuildPool(spec, playerIdx);
                 if (pool == null) return null;
-                HashSet<int> used = _used[playerIdx == 0 ? 0 : 1];
-                List<int> cands = new List<int>();
-                foreach (int cid in pool)
-                    if (!used.Contains(cid) && RoguelikeCardPool.Matches(DataDir, cid, spec)) cands.Add(cid);
-                if (cands.Count == 0) return null;
-                // any/link draw weighted by RoguelikeCardPool (rarity + rate groups); deck = uniform.
                 string source = Utils.GetValue<string>(spec, "source");
-                int pick;
-                if (source == "any" || source == "link")
-                {
-                    double[] w = new double[cands.Count];
-                    double total = 0;
-                    for (int i = 0; i < cands.Count; i++)
-                    {
-                        w[i] = Math.Max(0, RoguelikeCardPool.Weight(DataDir, cands[i], Ascension));
-                        total += w[i];
-                    }
-                    if (total <= 0) return null;
-                    double roll = Rng.NextDouble() * total;
-                    pick = cands[cands.Count - 1];
-                    for (int i = 0; i < cands.Count; i++) { roll -= w[i]; if (roll <= 0) { pick = cands[i]; break; } }
-                }
-                else
-                {
-                    pick = cands[Rng.Next(cands.Count)];
-                }
-                used.Add(pick);
-                return pick;
+                bool weighted = source == "any" || source == "link";
+                List<RoguelikeCardPool.DrawResult> drawn = RoguelikeCardPool.DrawN(
+                    DataDir, pool, spec, 1, Rng, Ascension,
+                    _used[playerIdx == 0 ? 0 : 1],
+                    /*rarityRatesOverride*/ null,
+                    weighted);
+                if (drawn.Count == 0) return null;
+                return drawn[0].Cid;
             }
 
             HashSet<int> BuildPool(Dictionary<string, object> spec, int playerIdx)
