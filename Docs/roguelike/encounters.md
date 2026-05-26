@@ -27,6 +27,7 @@ layer on top of it.
 - [Gating (act / floor / ascension)](#gating-act--floor--ascension)
 - [Overrides (LP, reward, first player)](#overrides-lp-reward-first-player)
 - [Modifiers (starting board)](#modifiers-starting-board)
+- [Actions (options / message / openpack)](#actions-options--message--openpack)
 - [Defaults & relationship to Settings.json](#defaults--relationship-to-settingsjson)
 - [Strict coverage — avoiding soft-locks](#strict-coverage--avoiding-soft-locks)
 - [Full example](#full-example)
@@ -69,6 +70,7 @@ parsed but inert until those node actions exist.
 | `cpuRate` | no | `Settings.cpuRate` (100) | CPU AI strength −100…100 (100 = max). |
 | `cpuFlag` | no | `Settings.cpuFlag` (None) | AI behavior: `None`/`Def`/`Fool`/`Light`/`MyTurnOnly`/`AttackOnly`/`Simple`. |
 | `modifiers` | no | none | Scripted starting board + LP/hand deltas — see [Modifiers](#modifiers-starting-board). |
+| `action` | no | none | Action tree fired after the encounter resolves — see [Actions](#actions-options--message--openpack). Combat encounters fire it on win; non-combat (`event`) on arrival. |
 
 In each range block (`act` / `floor` / `ascension`) either `min` or `max` may be omitted for an
 open-ended bound. An omitted block means "no restriction on that axis".
@@ -171,6 +173,9 @@ pool — picked server-side and seeded, so a resumed duel reproduces it:
 - `subtype` — monster: `normal` / `effect` / `ritual` / `fusion` / `synchro` / `xyz` / `link`;
   spell/trap: `normal` / `counter` / `field` / `equip` / `continuous` / `quickplay` / `ritual`.
 - `minAtk` / `maxAtk` / `minDef` / `maxDef` / `minLevel` / `maxLevel` — numeric filters (monsters).
+- `rarity` / `rarities` — hard filter by `CardList.json` rarity. `rarity: "UR"` or
+  `rarities: ["SR","UR"]` (values: `N` / `R` / `SR` / `UR`). Applies to `any` / `link` /
+  `deck` sources. Cards missing a rarity entry are excluded when the filter is set.
 - `source` — `deck` (default) draws from a deck via `deck_owner` (`own` (default) / `rival` / `p1` /
   `p2`); `any` draws from the configurable card pool (below); `link` draws from cards **related**
   (`CARD_Link`) to the `deck_owner` deck's cards, kept only if also in the pool. Duplicate picks on a
@@ -186,6 +191,10 @@ that card rewards will reuse):
   "exclude": [67890],
   "rarityRates": { "N": 8, "R": 4, "SR": 2, "UR": 1 },
   "rateGroups": [ { "cids": [5381, 5655], "rate": 5 }, { "cids": [9999], "rate": 0 } ],
+  "pity": {
+    "UR": { "increment": 10, "max": 50, "reset_on": ["UR"] },
+    "SR": { "increment": 5,  "max": 30, "reset_on": ["SR", "UR"] }
+  },
   "byAscension": [ {}, { "include": [99999], "rarityRates": { "UR": 3 } } ]
 }
 ```
@@ -199,6 +208,85 @@ that card rewards will reuse):
   `rateGroups` stack with the global ones.
 - `source: "deck"` picks stay uniform. Missing file = the default regulation's pool, uniform.
   Cached — restart the server to apply.
+- **Pity** — only used by `openpack` actions (below). Per-rarity counter on the run that grows
+  every pack which didn't yield a card of that rarity, adding a bonus to that rarity's weight
+  on the next pack until the counter resets. `increment` = bonus added per missed pack,
+  `max` = clamp on the accumulated bonus, `reset_on` = rarities that, when drawn, zero the
+  counter (default `[r]`). `byAscension[asc].pity` merges per-rarity per-field with the global.
+
+---
+
+## Actions (`options` / `message` / `openpack`)
+
+An encounter's `action` is a tree of action nodes the server walks after the encounter resolves
+(on win for combat, on arrival for `event`). The client renders prompts; the server applies state.
+
+### Action kinds
+
+| `type` | What it does |
+|---|---|
+| `options` | Branch — show a list of labeled choices; player picks one and the engine descends into that option's nested `action`. |
+| `message` | Terminal — show text with a single OK; completes the action when dismissed. |
+| `openpack` | Open one or more packs of cards with weighted draws and pity, then either keep all or pick X of N. Adds the resolved cards to the run's pool / deck. |
+
+```json
+"action": {
+  "type": "options",
+  "text": "Um viajante oferece uma escolha…",
+  "options": [
+    { "label": "Abrir o baú", "action": { "type": "message", "text": "Você pegou uma carta." } },
+    { "label": "Seguir",      "action": null }
+  ]
+}
+```
+
+An option whose `action` is `null` ends the tree immediately. Trees can nest arbitrarily.
+
+### `openpack`
+
+```jsonc
+{
+  "type": "openpack",
+  "packs": 3,                 // how many packs to open in sequence (default 1)
+  "pick": 0,                  // 0 = keep all; >0 = player picks exactly X out of all cards shown
+  "pulls": [
+    { "count": 6, "pool": { "source": "any", "random": "monster" } },
+    { "count": 1, "pool": { "source": "any", "random": "spell"   } },
+    { "count": 1, "chance": 0.5,
+      "pool": { "source": "any", "random": "monster", "rarity": "UR" } }
+  ],
+
+  // Optional pity override merged per-rarity with CardPool.json's global+ascension pity.
+  // Set "pity": false to disable pity entirely for this action.
+  "pity": { "UR": { "increment": 20 } },
+
+  // Optional UI labels (Brazilian Portuguese defaults via RoguelikeLabels).
+  // {0} = pick count, {1} = total shown.
+  "title_keep":    "Cartas obtidas",
+  "title_pick":    "Selecione {0} de {1} cartas",
+  "confirm_label": "Confirmar",
+
+  // Next action (same shape as an option's nested action); null ends the tree.
+  "next": null
+}
+```
+
+- **`pulls`** — ordered list of draws **per pack**. Pack size = `sum(pulls[].count)`. Each of the
+  `packs` packs rolls the pulls independently. `chance` (default 1.0) is a per-pull probability;
+  a failed pull is skipped (that pack ends up with fewer cards). Each pull's `pool` is a random
+  spec (same fields as the modifiers' [random spec](#modifiers-starting-board)), so `source`,
+  `random`, `subtype`, numeric filters, and the new `rarity` / `rarities` filter all work.
+- **`pick` vs total** — `pick` is over the **total** shown in the result UI. With `packs: 3` and
+  `sum(pulls.count) = 8`, the result shows 24 cards; `pick: 5` makes the player choose 5.
+- **Pity** — every pack ticks the run's per-rarity pity counter (no card of rarity `r` → `pity[r]++`;
+  any card whose rarity is in `reset_on[r]` → `pity[r] = 0`). The bonus
+  `min(pity[r] * increment, max)` is added to `rarityRates[r]` on the next pack. Merge order:
+  global `CardPool.json` → `byAscension[asc]` → `action.pity` (per-rarity, per-field). `pity: false`
+  on the action turns it off for that action (no bonus, no ticking).
+- **Determinism** — all draws are seeded by the run + node + pack index. A resumed pack picks the
+  same cards. Re-rolling requires advancing the run.
+- **State** — cards are added to the run's pool (and to the deck in keep-all mode) when the player
+  confirms. The action then advances to `next`.
 
 ---
 
