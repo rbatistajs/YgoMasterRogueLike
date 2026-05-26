@@ -28,6 +28,7 @@ layer on top of it.
 - [Overrides (LP, reward, first player)](#overrides-lp-reward-first-player)
 - [Modifiers (starting board)](#modifiers-starting-board)
 - [Actions (options / message / openpack)](#actions-options--message--openpack)
+- [Actions.json and type defaults](#actionsjson-and-type-defaults)
 - [Defaults & relationship to Settings.json](#defaults--relationship-to-settingsjson)
 - [Strict coverage — avoiding soft-locks](#strict-coverage--avoiding-soft-locks)
 - [Full example](#full-example)
@@ -70,7 +71,7 @@ parsed but inert until those node actions exist.
 | `cpuRate` | no | `Settings.cpuRate` (100) | CPU AI strength −100…100 (100 = max). |
 | `cpuFlag` | no | `Settings.cpuFlag` (None) | AI behavior: `None`/`Def`/`Fool`/`Light`/`MyTurnOnly`/`AttackOnly`/`Simple`. |
 | `modifiers` | no | none | Scripted starting board + LP/hand deltas — see [Modifiers](#modifiers-starting-board). |
-| `action` | no | none | Action tree fired after the encounter resolves — see [Actions](#actions-options--message--openpack). Combat encounters fire it on win; non-combat (`event`) on arrival. |
+| `action` | no | type default (if any) | Action tree fired after the encounter resolves. Object (inline), string (ref into [`Actions.json`](#actionsjson-and-type-defaults)), `null` (no action — overrides the type default), or absent (use type default). Combat encounters fire it on win; non-combat (`event`) on arrival. See [Actions](#actions-options--message--openpack). |
 
 In each range block (`act` / `floor` / `ascension`) either `min` or `max` may be omitted for an
 open-ended bound. An omitted block means "no restriction on that axis".
@@ -287,6 +288,88 @@ An option whose `action` is `null` ends the tree immediately. Trees can nest arb
   same cards. Re-rolling requires advancing the run.
 - **State** — cards are added to the run's pool (and to the deck in keep-all mode) when the player
   confirms. The action then advances to `next`.
+
+---
+
+## `Actions.json` and type defaults
+
+Two ways to keep `Encounters.json` clean when many encounters share the same action tree:
+
+### Named action registry (`Actions.json`)
+
+Optional file at `DataLE/Roguelike/Actions.json` — a flat map of `name → action tree`.
+Anywhere an `action` (or `option.action`, or `openpack.next`) value is expected, a **string**
+may be used instead of the inline object — the loader looks it up by name.
+
+```json
+// Actions.json
+{
+  "smallReward": {
+    "type": "openpack",
+    "packs": 1,
+    "pulls": [ { "count": 3, "pool": { "source": "any", "random": "monster" } } ]
+  },
+  "bigBossReward": {
+    "type": "openpack",
+    "packs": 1,
+    "pick": 1,
+    "pulls": [ { "count": 5, "pool": { "source": "any", "rarity": "UR" } } ]
+  },
+  "treasureChest": {
+    "type": "options",
+    "text": "Um baú trancado…",
+    "options": [
+      { "label": "Abrir", "action": "smallReward" },
+      { "label": "Seguir", "action": null }
+    ]
+  }
+}
+```
+
+Then in `Encounters.json`:
+
+```json
+{ "id": "duel_basic", "deck": "Beatdown.json", "action": "smallReward" }
+{ "id": "boss_a3",    "deck": "Exodia.json",    "action": "bigBossReward" }
+```
+
+- **Resolution is at load time.** The library is read once; each string ref is replaced with the
+  actual tree before validation. Restart the server to apply file changes (same as `Encounters.json`
+  / `CardPool.json`).
+- **Shared by reference.** N encounters using the same name share the same tree object — the
+  engine only reads, never mutates.
+- **Strict refs.** A string that doesn't exist in `Actions.json` fails the encounter's load
+  (logged and skipped). Same goes for cycles (`A → next: B → next: A`).
+- **Nested refs.** Inside an action tree, `option.action` and `openpack.next` may also be strings;
+  they're resolved recursively. `null` and missing keys both end that branch.
+- **Optional file.** No `Actions.json` = only inline trees and `null` work — nothing else changes.
+
+### Type defaults (`defaultAction`)
+
+A top-level `defaultAction` block in `Encounters.json` assigns a default action **per node type**.
+Encounters of that type without an `action` key inherit the default; an explicit `null` opts out.
+
+```json
+{
+  "defaultAction": {
+    "duel":  "smallReward",
+    "elite": "smallReward",
+    "boss":  "bigBossReward"
+  },
+  "duel":  [
+    { "id": "duel_basic",   "deck": "Beatdown.json" },                          // gets smallReward
+    { "id": "duel_no_loot", "deck": "Final Countdown.json", "action": null }    // no action (opt out)
+  ],
+  "boss":  [
+    { "id": "boss_a3", "deck": "Exodia.json", "act": { "min": 2 },
+      "action": { "type": "message", "text": "…" } }                            // overrides default with inline
+  ]
+}
+```
+
+Each default value follows the same rules as an encounter's `action`: string ref into
+`Actions.json`, inline object, or `null`. **Absent** on an encounter means "use default";
+**null** on an encounter means "no action even if there's a default".
 
 ---
 

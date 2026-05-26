@@ -48,14 +48,31 @@ namespace YgoMaster
             try { doc = MiniJSON.Json.DeserializeStripped(File.ReadAllText(p)) as Dictionary<string, object>; }
             catch (Exception ex) { Console.WriteLine("[Roguelike] Encounters.json parse EX: " + ex.Message); }
             if (doc == null) return _cache;
+
+            Dictionary<string, Dictionary<string, object>> actionLib = RoguelikeActions.Load(dataDirectory);
+
+            // defaultAction: { "duel": "name" | { ... } | null, "elite": ..., "boss": ... }
+            // Resolved once; applied to encounters whose `action` key is absent (null overrides).
+            Dictionary<string, Dictionary<string, object>> defaultByType = new Dictionary<string, Dictionary<string, object>>(StringComparer.Ordinal);
+            Dictionary<string, object> defRaw = Utils.GetValue<Dictionary<string, object>>(doc, "defaultAction");
+            if (defRaw != null)
+            {
+                foreach (KeyValuePair<string, object> kv in defRaw)
+                {
+                    try { defaultByType[kv.Key] = RoguelikeActions.Resolve(kv.Value, actionLib, new HashSet<string>()); }
+                    catch (Exception ex) { Console.WriteLine("[Roguelike] defaultAction[" + kv.Key + "] resolve EX: " + ex.Message); }
+                }
+            }
+
             foreach (KeyValuePair<string, object> kv in doc)
             {
+                if (kv.Key == "defaultAction") continue;
                 List<object> arr = kv.Value as List<object>;
                 if (arr == null) continue;
                 List<Encounter> list = new List<Encounter>();
                 foreach (object o in arr)
                 {
-                    Encounter e = Parse(o as Dictionary<string, object>);
+                    Encounter e = Parse(o as Dictionary<string, object>, kv.Key, actionLib, defaultByType);
                     if (e != null) list.Add(e);
                 }
                 _cache[kv.Key] = list;
@@ -63,7 +80,7 @@ namespace YgoMaster
             return _cache;
         }
 
-        static Encounter Parse(Dictionary<string, object> d)
+        static Encounter Parse(Dictionary<string, object> d, string type, Dictionary<string, Dictionary<string, object>> actionLib, Dictionary<string, Dictionary<string, object>> defaultByType)
         {
             if (d == null) return null;
             string id = Utils.GetValue<string>(d, "id", null);
@@ -89,8 +106,20 @@ namespace YgoMaster
                 CpuRate = OptInt(d, "cpuRate"),
                 CpuFlag = ValidCpuFlag(Utils.GetValue<string>(d, "cpuFlag", null), id),
                 Modifiers = Utils.GetValue<Dictionary<string, object>>(d, "modifiers"),
-                Action = Utils.GetValue<Dictionary<string, object>>(d, "action"),
             };
+            // action: string ref | object | null | absent. Absent => use defaultByType[type].
+            // Explicit null overrides default (encounter wants no action).
+            object actionRaw;
+            if (d.TryGetValue("action", out actionRaw))
+            {
+                try { e.Action = RoguelikeActions.Resolve(actionRaw, actionLib, new HashSet<string>()); }
+                catch (Exception ex) { Console.WriteLine("[Roguelike] encounter '" + id + "' action resolve EX: " + ex.Message); return null; }
+            }
+            else
+            {
+                Dictionary<string, object> def;
+                if (defaultByType != null && defaultByType.TryGetValue(type, out def)) e.Action = def;
+            }
             object w; if (d.TryGetValue("weight", out w)) { try { e.Weight = Convert.ToDouble(w); } catch { } }
             if (string.IsNullOrEmpty(e.Name)) e.Name = Path.GetFileNameWithoutExtension(deck);
             if (e.Action != null)
