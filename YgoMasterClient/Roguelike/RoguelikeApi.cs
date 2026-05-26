@@ -241,92 +241,79 @@ namespace YgoMasterClient
 
         // ----- actions (M5) -----
 
-        public class ActionPrompt
+        // Unified pending action ($.Roguelike.action). Type-specific fields live in Data; consumers
+        // dispatch on Type ("options" / "message" / "openpack"). Token bumps each new prompt.
+        public class PendingAction
         {
             public int Token;
-            public string Type;      // "options" | "message"
-            public string Title;     // header
-            public string Message;   // body
-            public string[] Options; // option labels (empty for message)
+            public string Type;
+            public Dictionary<string, object> Data;
+
+            // options/message accessors
+            public string Title   { get { return Data != null && Data.ContainsKey("title")   ? Convert.ToString(Data["title"])   : ""; } }
+            public string Message { get { return Data != null && Data.ContainsKey("message") ? Convert.ToString(Data["message"]) : ""; } }
+            public string[] Options
+            {
+                get
+                {
+                    if (Data == null) return new string[0];
+                    List<object> opts = Data.ContainsKey("options") ? Data["options"] as List<object> : null;
+                    if (opts == null) return new string[0];
+                    string[] r = new string[opts.Count];
+                    for (int i = 0; i < opts.Count; i++) r[i] = Convert.ToString(opts[i]);
+                    return r;
+                }
+            }
+
+            // openpack accessors
+            public string Mode { get { return Data != null && Data.ContainsKey("mode") ? Convert.ToString(Data["mode"]) : "keep"; } }
+            public int Pick    { get { return Data != null && Data.ContainsKey("pick") ? Convert.ToInt32(Data["pick"])  : 0; } }
+            public int Size    { get { return Data != null && Data.ContainsKey("size") ? Convert.ToInt32(Data["size"])  : 0; } }
+            public PackLabels TextLabels
+            {
+                get
+                {
+                    Dictionary<string, object> lab = Data != null && Data.ContainsKey("labels") ? Data["labels"] as Dictionary<string, object> : null;
+                    return new PackLabels
+                    {
+                        // Priority: action spec -> Labels.json -> "" (vanilla preserved).
+                        TitleKeep = lab != null && lab.ContainsKey("title_keep")
+                            ? Convert.ToString(lab["title_keep"]) : RoguelikeLabels.Get("pack.title.keep", ""),
+                        TitlePick = lab != null && lab.ContainsKey("title_pick")
+                            ? Convert.ToString(lab["title_pick"]) : RoguelikeLabels.Get("pack.title.pick", ""),
+                        Confirm   = lab != null && lab.ContainsKey("confirm")
+                            ? Convert.ToString(lab["confirm"])    : RoguelikeLabels.Get("pack.confirm", ""),
+                    };
+                }
+            }
+            public class PackLabels { public string TitleKeep; public string TitlePick; public string Confirm; }
         }
 
-        public class PendingPack
-        {
-            public int Token;
-            public string Mode;     // "keep" | "pick"
-            public int Pick;
-            public int Size;
-            public Labels TextLabels;
-            public class Labels { public string TitleKeep; public string TitlePick; public string Confirm; }
-        }
-        static string _lastPendingPackJson; // diag dedup so the per-frame log doesn't spam
+        static string _lastActionJson; // diag dedup so the per-frame log doesn't spam
 
-        // Current server action prompt ($.Roguelike.action), or null when nothing is pending.
-        public static ActionPrompt GetActionPrompt()
+        // Current server action ($.Roguelike.action), or null when nothing is pending. Replaces
+        // the older GetActionPrompt + GetPendingPack split.
+        public static PendingAction GetPendingAction()
         {
             try
             {
                 string json = YgomSystem.Utility.ClientWork.SerializePath("Roguelike.action");
                 if (string.IsNullOrEmpty(json)) return null;
+                if (json != _lastActionJson)
+                {
+                    _lastActionJson = json;
+                    Console.WriteLine("[Roguelike] GetPendingAction: json=" + (json.Length > 200 ? json.Substring(0, 200) + "..." : json));
+                }
                 Dictionary<string, object> d = MiniJSON.Json.Deserialize(json) as Dictionary<string, object>;
                 if (d == null) return null;
-                ActionPrompt p = new ActionPrompt
+                return new PendingAction
                 {
                     Token = d.ContainsKey("token") ? Convert.ToInt32(d["token"]) : 0,
-                    Type = d.ContainsKey("type") ? Convert.ToString(d["type"]) : "",
-                    Title = d.ContainsKey("title") ? Convert.ToString(d["title"]) : "",
-                    Message = d.ContainsKey("message") ? Convert.ToString(d["message"]) : "",
-                };
-                List<object> opts = d.ContainsKey("options") ? d["options"] as List<object> : null;
-                if (opts != null)
-                {
-                    p.Options = new string[opts.Count];
-                    for (int i = 0; i < opts.Count; i++) p.Options[i] = Convert.ToString(opts[i]);
-                }
-                else p.Options = new string[0];
-                return p;
-            }
-            catch (Exception ex) { Console.WriteLine("[Roguelike] GetActionPrompt EX: " + ex); return null; }
-        }
-
-        // Pending card pack state ($.Roguelike.pendingPack), or null when none active.
-        public static PendingPack GetPendingPack()
-        {
-            try
-            {
-                string json = YgomSystem.Utility.ClientWork.SerializePath("Roguelike.pendingPack");
-                if (string.IsNullOrEmpty(json)) return null;
-                // log only when payload changes (per-frame call is intentional but log would spam)
-                if (json != _lastPendingPackJson)
-                {
-                    _lastPendingPackJson = json;
-                    Console.WriteLine("[Roguelike] GetPendingPack: json=" + (json.Length > 200 ? json.Substring(0, 200) + "..." : json));
-                }
-                Dictionary<string, object> d = MiniJSON.Json.Deserialize(json) as Dictionary<string, object>;
-                if (d == null) return null;
-                Dictionary<string, object> lab = d.ContainsKey("labels") ? d["labels"] as Dictionary<string, object> : null;
-                return new PendingPack
-                {
-                    Token = Convert.ToInt32(d.ContainsKey("token") ? d["token"] : 0),
-                    Mode  = d.ContainsKey("mode")  ? Convert.ToString(d["mode"]) : "keep",
-                    Pick  = Convert.ToInt32(d.ContainsKey("pick") ? d["pick"] : 0),
-                    Size  = Convert.ToInt32(d.ContainsKey("size") ? d["size"] : 0),
-                    TextLabels = new PendingPack.Labels
-                    {
-                        // Priority: action spec -> Labels.json -> "" (no override; vanilla preserved).
-                        TitleKeep = lab != null && lab.ContainsKey("title_keep")
-                            ? Convert.ToString(lab["title_keep"])
-                            : RoguelikeLabels.Get("pack.title.keep", ""),
-                        TitlePick = lab != null && lab.ContainsKey("title_pick")
-                            ? Convert.ToString(lab["title_pick"])
-                            : RoguelikeLabels.Get("pack.title.pick", ""),
-                        Confirm   = lab != null && lab.ContainsKey("confirm")
-                            ? Convert.ToString(lab["confirm"])
-                            : RoguelikeLabels.Get("pack.confirm", ""),
-                    }
+                    Type  = d.ContainsKey("type")  ? Convert.ToString(d["type"]) : "",
+                    Data  = d.ContainsKey("data")  ? d["data"] as Dictionary<string, object> : null,
                 };
             }
-            catch (Exception ex) { Console.WriteLine("[Roguelike] GetPendingPack EX: " + ex); return null; }
+            catch (Exception ex) { Console.WriteLine("[Roguelike] GetPendingAction EX: " + ex); return null; }
         }
 
         // Dev/test: run encounter <id>'s action through the server engine.
@@ -334,20 +321,28 @@ namespace YgoMasterClient
         {
             Call("Roguelike.encounter_action", new Dictionary<string, object> { { "id", id } });
         }
-        // Resolve the current action prompt with the player's choice.
-        public static void ActionRespond(int choice)
+
+        // Resolve the current action prompt. Payload is per-type:
+        //   options  -> { token, choice }
+        //   message  -> { token }            (any payload accepted; engine just advances)
+        //   openpack -> { token, picks: [..] }
+        public static void ActionRespond(int token, Dictionary<string, object> payload = null)
         {
-            Call("Roguelike.action_respond", new Dictionary<string, object> { { "choice", choice } });
+            Dictionary<string, object> p = payload != null
+                ? new Dictionary<string, object>(payload)
+                : new Dictionary<string, object>();
+            p["token"] = token;
+            Call("Roguelike.action_respond", p);
         }
-        // Finalize a pending card pack with the player's picks.
-        public static void PackFinalize(int token, int[] picks)
+
+        public static void ActionRespondChoice(int token, int choice)
         {
-            Dictionary<string, object> p = new Dictionary<string, object>
-            {
-                { "token", token },
-                { "picks", picks }
-            };
-            Call("Roguelike.pack_finalize", p);
+            ActionRespond(token, new Dictionary<string, object> { { "choice", choice } });
+        }
+
+        public static void ActionRespondPicks(int token, int[] picks)
+        {
+            ActionRespond(token, new Dictionary<string, object> { { "picks", picks } });
         }
 
         // ----- combat (M4) -----

@@ -27,9 +27,9 @@ namespace YgoMaster
         public int Ascension;                       // ascension tier this run is played at
         public bool Won;                            // set when the final act's boss falls
         public Dictionary<string, object> PendingAction; // current action-tree node awaiting resolution, or null
+                                                         // for openpack the node is enriched in-place with "_cards"/"_size"/"_mode"/"_labels"
         public int ActionToken;                     // bumps each time a new prompt is presented (client dedup)
         public Dictionary<string, int> Pity;            // per-rarity miss counter ({"UR":7, "SR":2}); grows uncapped, capped in Weight
-        public Dictionary<string, object> PendingPack;  // staged pack awaiting finalize; null when none
 
         public Dictionary<string, object> ToDictionary()
         {
@@ -55,7 +55,6 @@ namespace YgoMaster
                 { "pendingAction", PendingAction },
                 { "actionToken", ActionToken },
                 { "pity",         Pity ?? new Dictionary<string, int>() },
-                { "pendingPack",  PendingPack },
             };
         }
 
@@ -87,7 +86,6 @@ namespace YgoMaster
                 PendingAction = Utils.GetValue<Dictionary<string, object>>(d, "pendingAction"),
                 ActionToken   = Utils.GetValue<int>(d, "actionToken", 0),
                 Pity         = ParsePity(Utils.GetValue<Dictionary<string, object>>(d, "pity")),
-                PendingPack  = Utils.GetValue<Dictionary<string, object>>(d, "pendingPack"),
             };
         }
 
@@ -115,6 +113,37 @@ namespace YgoMaster
                 { "p_n", p_n }, { "p_p1n", p_p1n }, { "p_p2n", p_p2n },
                 { "tn", n + p1n + p2n + p_n + p_p1n + p_p2n },
             };
+        }
+
+        // Place cid in the correct deck section of the run deck (Main or Extra). Creates the
+        // minimal structure if missing. Used by openpack pick commit so picks land in the
+        // active deck without needing a separate edit step.
+        public void AddCidToDeck(string dataDir, int cardId)
+        {
+            if (Deck == null) Deck = new Dictionary<string, object>();
+            object deckObj;
+            Dictionary<string, object> deckInner;
+            if (!Deck.TryGetValue("deck", out deckObj) || !(deckObj is Dictionary<string, object>))
+            {
+                deckInner = new Dictionary<string, object>();
+                Deck["deck"] = deckInner;
+            }
+            else { deckInner = (Dictionary<string, object>)deckObj; }
+
+            string section = RoguelikeCardPool.IsCardExtraDeck(dataDir, cardId) ? "e" : "m";
+            object secObj;
+            Dictionary<string, object> sec;
+            if (!deckInner.TryGetValue(section, out secObj) || !(secObj is Dictionary<string, object>))
+            {
+                sec = new Dictionary<string, object>();
+                deckInner[section] = sec;
+            }
+            else { sec = (Dictionary<string, object>)secObj; }
+
+            List<object> ids = Utils.GetValue<List<object>>(sec, "ids") ?? new List<object>();
+            List<object> rs  = Utils.GetValue<List<object>>(sec, "r")   ?? new List<object>();
+            ids.Add(cardId); rs.Add(1);
+            sec["ids"] = ids; sec["r"] = rs;
         }
 
         // MiniJSON deserializes the "pity" object's values as boxed objects; coerce to int here.

@@ -3,12 +3,18 @@ using System.Collections.Generic;
 
 namespace YgoMaster
 {
-    // Server-authoritative walker over an action tree. v1 understands two node types:
-    //   options  : { type, text, options:[ { label, action } ] }  -> branch (await a choice)
-    //   message  : { type, text }                                 -> terminal (await OK)
-    //   openpack : { type, packs, pick, pulls:[...], next, ... }  -> generate cards, stage in PendingPack
+    // Server-authoritative walker over an action tree. v1 understands three UI node types:
+    //   options  : { type, title, message, options:[ { label, next } ] }     -> branch (await a choice)
+    //   message  : { type, title, message, next? }                            -> terminal/chain (await OK)
+    //   openpack : { type, packs, pick, pulls:[...], next?, ... }             -> generate cards (await picks)
     // The cursor (run.PendingAction) is the node currently presented; ActionToken bumps on
     // each new prompt so the client renders it once. Project() builds the thin wire payload.
+    //
+    // openpack flow (unified with options/message):
+    //  Step()    -> rolls cards, enriches the same node in-place with "_cards"/"_size"/"_mode"/"_labels",
+    //               leaves PendingAction pointing at it (no separate PendingPack state).
+    //  Respond() -> reads picks from the payload, validates, commits via run.AddCard + run.AddCidToDeck,
+    //               then advances to `next`.
     static class RoguelikeActionEngine
     {
         // Begin an action: set the root as the cursor, then settle on the first UI node.
@@ -21,15 +27,21 @@ namespace YgoMaster
             Step(run, dataDirectory, regulation);
         }
 
-        // Resolve the current prompt with the player's choice, then settle on the next UI node.
-        public static void Respond(RoguelikeRun run, int choice,
+        // Resolve the current prompt with the player's payload (per-type fields), then settle on the next.
+        // Returns true when applied; false when stale (token mismatch) or invalid (bad picks). On false,
+        // run state is untouched — the caller may set request.ResultCode.
+        public static bool Respond(RoguelikeRun run, Dictionary<string, object> data,
             string dataDirectory = null, Dictionary<string, object> regulation = null)
         {
             Dictionary<string, object> cur = run.PendingAction;
-            if (cur == null) return;
+            if (cur == null) return false;
+            // Token guard: drops late acks for an already-replaced prompt.
+            int token = data != null ? Utils.GetValue<int>(data, "token", -1) : -1;
+            if (token != run.ActionToken) { Console.WriteLine("[Roguelike] engine.Respond: stale token " + token + " (expected " + run.ActionToken + ")"); return false; }
             string type = Utils.GetValue<string>(cur, "type", "");
             if (type == "options")
             {
+                int choice = data != null ? Utils.GetValue<int>(data, "choice", -1) : -1;
                 List<object> opts = Utils.GetValue<List<object>>(cur, "options");
                 Dictionary<string, object> chosen = (opts != null && choice >= 0 && choice < opts.Count)
                     ? opts[choice] as Dictionary<string, object> : null;
@@ -39,11 +51,45 @@ namespace YgoMaster
             {
                 SetPending(run, Utils.GetValue<Dictionary<string, object>>(cur, "next"));
             }
+            else if (type == "openpack")
+            {
+                if (!CommitOpenPackPicks(run, cur, data, dataDirectory)) return false;
+                SetPending(run, Utils.GetValue<Dictionary<string, object>>(cur, "next"));
+            }
             else
             {
                 SetPending(run, null); // unknown -> done
             }
             Step(run, dataDirectory, regulation);
+            return true;
+        }
+
+        // Validate picks against the enriched openpack node and commit cards. Returns false on
+        // invalid input (out-of-range index, wrong count for the mode); cur is untouched in that case.
+        static bool CommitOpenPackPicks(RoguelikeRun run, Dictionary<string, object> cur,
+            Dictionary<string, object> data, string dataDirectory)
+        {
+            List<object> cards = Utils.GetValue<List<object>>(cur, "_cards");
+            int size = Utils.GetValue<int>(cur, "_size");
+            string mode = Utils.GetValue<string>(cur, "_mode");
+            int pickRequired = Utils.GetValue<int>(cur, "pick");
+            List<object> picksRaw = data != null ? Utils.GetValue<List<object>>(data, "picks") : null;
+            if (picksRaw == null) picksRaw = new List<object>();
+            HashSet<int> picks = new HashSet<int>();
+            foreach (object o in picksRaw) { int i; try { i = Convert.ToInt32(o); } catch { continue; } picks.Add(i); }
+            foreach (int i in picks) if (i < 0 || i >= size) return false;
+            if (mode == "keep" && picks.Count != size) return false;
+            if (mode == "pick" && picks.Count != pickRequired) return false;
+            if (cards != null)
+                foreach (int idx in picks)
+                {
+                    Dictionary<string, object> c = cards[idx] as Dictionary<string, object>;
+                    if (c == null) continue;
+                    int cid = Utils.GetValue<int>(c, "cid");
+                    run.AddCard(cid, 1);
+                    run.AddCidToDeck(dataDirectory, cid);
+                }
+            return true;
         }
 
         // Advance through non-UI nodes; stop on a UI node (options/message/openpack) or when finished.
@@ -58,102 +104,14 @@ namespace YgoMaster
                 if (type == "options" || type == "message") return; // needs UI; Project() will emit it
                 else if (type == "openpack")
                 {
-                    // ActionToken was already bumped by SetPending; use it as-is for deterministic RNG.
-                    int packs = Utils.GetValue<int>(node, "packs", 1);
-                    int pick = Utils.GetValue<int>(node, "pick", 0);
-                    List<object> pulls = Utils.GetValue<List<object>>(node, "pulls");
-                    Dictionary<string, object> next = Utils.GetValue<Dictionary<string, object>>(node, "next");
-                    Console.WriteLine("[Roguelike] openpack enter: packs=" + packs + " pick=" + pick + " pulls=" + (pulls != null ? pulls.Count : 0));
-
-                    // pity: action.pity = false disables; merge global+asc+action
-                    object pityRaw;
-                    bool pityEnabled = true;
-                    Dictionary<string, object> actionPity = null;
-                    if (node.TryGetValue("pity", out pityRaw))
-                    {
-                        if (pityRaw is bool && !(bool)pityRaw) pityEnabled = false;
-                        else actionPity = pityRaw as Dictionary<string, object>;
-                    }
-                    Dictionary<int, RoguelikeCardPool.PityConfig> pityCfg =
-                        pityEnabled ? MergePity(RoguelikeCardPool.Pity(dataDirectory, run.Ascension), actionPity) : null;
-
-                    if (run.Pity == null) run.Pity = new Dictionary<string, int>();
-
-                    Random rng = new Random(unchecked((int)(run.Seed ^ ((long)run.ActionToken * 2654435761L)))); // Knuth multiplicative hash
-                    HashSet<int> anyPool = RoguelikeCardPool.AnyPool(dataDirectory, regulation, run.Ascension);
-                    Console.WriteLine("[Roguelike] openpack anyPool size=" + (anyPool != null ? anyPool.Count : -1));
-
-                    List<Dictionary<string, object>> allCards = new List<Dictionary<string, object>>();
-                    for (int packIdx = 0; packIdx < packs; packIdx++)
-                    {
-                        HashSet<int> usedPack = new HashSet<int>();
-                        List<RoguelikeCardPool.DrawResult> packDraws = new List<RoguelikeCardPool.DrawResult>();
-                        if (pulls != null)
-                            foreach (object pullObj in pulls)
-                            {
-                                Dictionary<string, object> pull = pullObj as Dictionary<string, object>;
-                                if (pull == null) continue;
-                                double chance = Utils.GetValue<double>(pull, "chance", 1.0);
-                                if (chance < 1.0 && rng.NextDouble() >= chance) continue;
-                                int count = Utils.GetValue<int>(pull, "count", 0);
-                                Dictionary<string, object> pool = Utils.GetValue<Dictionary<string, object>>(pull, "pool");
-                                string source = pool != null ? Utils.GetValue<string>(pool, "source", "any") : "any";
-                                // v1: openpack only supports source=any. Other sources log and fall back to any.
-                                if (source != "any")
-                                {
-                                    Console.WriteLine("[Roguelike] openpack pool.source '" + source + "' not supported in v1; falling back to 'any'");
-                                }
-                                bool weighted = true;
-                                HashSet<int> universe = anyPool;
-
-                                // rarityRates: action override + pity bonus, applied on top of layered (global+asc) rates
-                                Dictionary<int, double> rrEffective = MergeRarityRatesWithPity(
-                                    RoguelikeCardPool.LayeredRarityRates(dataDirectory, run.Ascension),
-                                    pool != null ? Utils.GetValue<Dictionary<string, object>>(pool, "rarityRates") : null,
-                                    pityCfg, run.Pity);
-
-                                List<RoguelikeCardPool.DrawResult> drawn = RoguelikeCardPool.DrawN(
-                                    dataDirectory, universe, pool, count, rng, run.Ascension,
-                                    usedPack, rrEffective, weighted);
-                                Console.WriteLine("[Roguelike] DrawN: requested=" + count + " got=" + drawn.Count + " (universe=" + universe.Count + ")");
-                                packDraws.AddRange(drawn);
-                            }
-                        foreach (RoguelikeCardPool.DrawResult d in packDraws)
-                        {
-                            allCards.Add(new Dictionary<string, object>
-                            {
-                                { "cid", d.Cid }, { "rarity", d.Rarity },
-                                { "new", d.IsNew }, { "premium", d.PremiumType },
-                                { "packIdx", packIdx }
-                            });
-                        }
-                        // pity tick after the pack (counters accumulate across packs within this openpack node)
-                        if (pityCfg != null) UpdatePity(run.Pity, packDraws, pityCfg);
-                    }
-
-                    int size = allCards.Count;
-                    Console.WriteLine("[Roguelike] openpack staged: packs=" + packs + " size=" + size + " pick=" + pick + " token=" + run.ActionToken);
-                    if (size == 0)
-                    {
-                        // No cards drawn (empty universe / over-filtered pool / weights all zero).
-                        // Don't stage an empty pack — advance to `next` (or terminate) instead.
-                        Console.WriteLine("[Roguelike] openpack: 0 cards drawn; skipping stage and advancing");
-                        SetPending(run, next);
-                        continue; // re-enter the while loop on `next` (or fall through if null)
-                    }
-                    string mode = pick > 0 ? "pick" : "keep";
-                    Dictionary<string, object> labels = BuildOpenPackLabels(node, pick, size);
-
-                    run.PendingPack = new Dictionary<string, object>
-                    {
-                        { "token", run.ActionToken },
-                        { "mode", mode }, { "pick", pick }, { "size", size },
-                        { "cards", allCards.ConvertAll(c => (object)c) },
-                        { "labels", labels },
-                        { "next", next }
-                    };
-                    run.PendingAction = null;  // openpack takes its place; done for now
-                    return;
+                    if (node.ContainsKey("_cards")) return; // already rolled (re-entry on reload); waiting for picks
+                    // Clone the openpack node before staging runtime data: the action tree is
+                    // shared (Encounters/Actions.json cache) so mutating in-place would pollute
+                    // subsequent invocations across calls and players.
+                    Dictionary<string, object> clone = new Dictionary<string, object>(node);
+                    run.PendingAction = clone;
+                    if (!RollOpenPack(run, clone, dataDirectory, regulation)) continue; // 0 cards drawn -> advance
+                    return; // staged; awaits picks
                 }
                 else
                 {
@@ -163,28 +121,136 @@ namespace YgoMaster
             }
         }
 
+        // Roll cards for this openpack node and stash them on the node ("_cards"/"_size"/"_mode"/"_labels").
+        // Returns true when at least one card was drawn (UI will follow); false on empty result
+        // (the caller should advance to `next`).
+        static bool RollOpenPack(RoguelikeRun run, Dictionary<string, object> node,
+            string dataDirectory, Dictionary<string, object> regulation)
+        {
+            int packs = Utils.GetValue<int>(node, "packs", 1);
+            int pick = Utils.GetValue<int>(node, "pick", 0);
+            List<object> pulls = Utils.GetValue<List<object>>(node, "pulls");
+            Console.WriteLine("[Roguelike] openpack enter: packs=" + packs + " pick=" + pick + " pulls=" + (pulls != null ? pulls.Count : 0));
+
+            // pity: action.pity = false disables; merge global+asc+action
+            object pityRaw;
+            bool pityEnabled = true;
+            Dictionary<string, object> actionPity = null;
+            if (node.TryGetValue("pity", out pityRaw))
+            {
+                if (pityRaw is bool && !(bool)pityRaw) pityEnabled = false;
+                else actionPity = pityRaw as Dictionary<string, object>;
+            }
+            Dictionary<int, RoguelikeCardPool.PityConfig> pityCfg =
+                pityEnabled ? MergePity(RoguelikeCardPool.Pity(dataDirectory, run.Ascension), actionPity) : null;
+
+            if (run.Pity == null) run.Pity = new Dictionary<string, int>();
+
+            Random rng = new Random(unchecked((int)(run.Seed ^ ((long)run.ActionToken * 2654435761L)))); // Knuth multiplicative hash
+            HashSet<int> anyPool = RoguelikeCardPool.AnyPool(dataDirectory, regulation, run.Ascension);
+            Console.WriteLine("[Roguelike] openpack anyPool size=" + (anyPool != null ? anyPool.Count : -1));
+
+            List<Dictionary<string, object>> allCards = new List<Dictionary<string, object>>();
+            for (int packIdx = 0; packIdx < packs; packIdx++)
+            {
+                HashSet<int> usedPack = new HashSet<int>();
+                List<RoguelikeCardPool.DrawResult> packDraws = new List<RoguelikeCardPool.DrawResult>();
+                if (pulls != null)
+                    foreach (object pullObj in pulls)
+                    {
+                        Dictionary<string, object> pull = pullObj as Dictionary<string, object>;
+                        if (pull == null) continue;
+                        double chance = Utils.GetValue<double>(pull, "chance", 1.0);
+                        if (chance < 1.0 && rng.NextDouble() >= chance) continue;
+                        int count = Utils.GetValue<int>(pull, "count", 0);
+                        Dictionary<string, object> pool = Utils.GetValue<Dictionary<string, object>>(pull, "pool");
+                        string source = pool != null ? Utils.GetValue<string>(pool, "source", "any") : "any";
+                        // v1: openpack only supports source=any. Other sources log and fall back to any.
+                        if (source != "any")
+                            Console.WriteLine("[Roguelike] openpack pool.source '" + source + "' not supported in v1; falling back to 'any'");
+                        bool weighted = true;
+                        HashSet<int> universe = anyPool;
+
+                        // rarityRates: action override + pity bonus, applied on top of layered (global+asc) rates
+                        Dictionary<int, double> rrEffective = MergeRarityRatesWithPity(
+                            RoguelikeCardPool.LayeredRarityRates(dataDirectory, run.Ascension),
+                            pool != null ? Utils.GetValue<Dictionary<string, object>>(pool, "rarityRates") : null,
+                            pityCfg, run.Pity);
+
+                        List<RoguelikeCardPool.DrawResult> drawn = RoguelikeCardPool.DrawN(
+                            dataDirectory, universe, pool, count, rng, run.Ascension,
+                            usedPack, rrEffective, weighted);
+                        Console.WriteLine("[Roguelike] DrawN: requested=" + count + " got=" + drawn.Count + " (universe=" + universe.Count + ")");
+                        packDraws.AddRange(drawn);
+                    }
+                foreach (RoguelikeCardPool.DrawResult d in packDraws)
+                {
+                    allCards.Add(new Dictionary<string, object>
+                    {
+                        { "cid", d.Cid }, { "rarity", d.Rarity },
+                        { "new", d.IsNew }, { "premium", d.PremiumType },
+                        { "packIdx", packIdx }
+                    });
+                }
+                // pity tick after the pack (counters accumulate across packs within this openpack node)
+                if (pityCfg != null) UpdatePity(run.Pity, packDraws, pityCfg);
+            }
+
+            int size = allCards.Count;
+            Console.WriteLine("[Roguelike] openpack staged: packs=" + packs + " size=" + size + " pick=" + pick + " token=" + run.ActionToken);
+            if (size == 0)
+            {
+                // No cards drawn (empty universe / over-filtered pool / weights all zero).
+                // Advance to `next` (or terminate) instead of staging an empty pack.
+                Console.WriteLine("[Roguelike] openpack: 0 cards drawn; skipping stage and advancing");
+                SetPending(run, Utils.GetValue<Dictionary<string, object>>(node, "next"));
+                return false;
+            }
+            string mode = pick > 0 ? "pick" : "keep";
+            // Within each pack: sort DESC by rarity (cid asc tiebreaker) so the persisted order
+            // matches what the vanilla Result VC shows (it always reorders rarity desc). Picks
+            // indices from the client then map 1:1 to _cards[i] for the commit. The Gacha
+            // projection (animation) inverts to ASC per pack so the dramatic build-up reads
+            // low-rarity first, high last.
+            allCards.Sort((a, b) =>
+            {
+                int pa = Utils.GetValue<int>(a, "packIdx");
+                int pb = Utils.GetValue<int>(b, "packIdx");
+                if (pa != pb) return pa.CompareTo(pb);
+                int ra = Utils.GetValue<int>(a, "rarity");
+                int rb = Utils.GetValue<int>(b, "rarity");
+                if (ra != rb) return rb.CompareTo(ra); // rarity desc
+                int ca = Utils.GetValue<int>(a, "cid");
+                int cb = Utils.GetValue<int>(b, "cid");
+                return ca.CompareTo(cb);
+            });
+            node["_cards"] = allCards.ConvertAll(c => (object)c);
+            node["_size"] = size;
+            node["_mode"] = mode;
+            node["_labels"] = BuildOpenPackLabels(node, pick, size);
+            return true;
+        }
+
         static void SetPending(RoguelikeRun run, Dictionary<string, object> node)
         {
             run.PendingAction = node;
             if (node != null) run.ActionToken++;
         }
 
-        // Thin prompt for the wire ($.Roguelike.action), or null when nothing is pending.
+        // Wire prompt for $.Roguelike.action: { type, token, data:{...} } or null.
+        // For openpack, the rolled cards live on the node as "_cards" (server-only); the wire
+        // exposes just mode/pick/size/labels — the cards ride along via $.Gacha (vanilla shape).
         public static Dictionary<string, object> Project(RoguelikeRun run)
         {
             Dictionary<string, object> cur = run.PendingAction;
             if (cur == null) return null;
             string type = Utils.GetValue<string>(cur, "type", "");
-            Dictionary<string, object> p = new Dictionary<string, object>
-            {
-                { "token", run.ActionToken },
-                { "type", type },
-                // title = header, message = body. `text` is a legacy alias for title.
-                { "title", Utils.GetValue<string>(cur, "title", Utils.GetValue<string>(cur, "text", "")) },
-                { "message", Utils.GetValue<string>(cur, "message", "") },
-            };
+            Dictionary<string, object> data = new Dictionary<string, object>();
             if (type == "options")
             {
+                // title = header, message = body. `text` is a legacy alias for title.
+                data["title"]   = Utils.GetValue<string>(cur, "title", Utils.GetValue<string>(cur, "text", ""));
+                data["message"] = Utils.GetValue<string>(cur, "message", "");
                 List<object> labels = new List<object>();
                 List<object> opts = Utils.GetValue<List<object>>(cur, "options");
                 if (opts != null)
@@ -193,9 +259,39 @@ namespace YgoMaster
                         Dictionary<string, object> od = o as Dictionary<string, object>;
                         labels.Add(od != null ? Utils.GetValue<string>(od, "label", "") : "");
                     }
-                p["options"] = labels;
+                data["options"] = labels;
             }
-            return p;
+            else if (type == "message")
+            {
+                data["title"]   = Utils.GetValue<string>(cur, "title", Utils.GetValue<string>(cur, "text", ""));
+                data["message"] = Utils.GetValue<string>(cur, "message", "");
+            }
+            else if (type == "openpack")
+            {
+                // Only expose post-roll fields. If the node hasn't been rolled yet (e.g., 0-card stage
+                // already advanced), skip projection — the cursor moved on and Step will settle.
+                if (!cur.ContainsKey("_cards")) return null;
+                data["mode"]   = Utils.GetValue<string>(cur, "_mode");
+                data["pick"]   = Utils.GetValue<int>(cur, "pick", 0);
+                data["size"]   = Utils.GetValue<int>(cur, "_size");
+                data["labels"] = Utils.GetValue<Dictionary<string, object>>(cur, "_labels") ?? new Dictionary<string, object>();
+            }
+            return new Dictionary<string, object>
+            {
+                { "type",  type },
+                { "token", run.ActionToken },
+                { "data",  data },
+            };
+        }
+
+        // Server-only: rolled cards for the current openpack node (for the $.Gacha projection).
+        // Returns null when no openpack is pending. Mirrors RoguelikeRun internals; not on the wire.
+        public static List<object> PendingOpenPackCards(RoguelikeRun run)
+        {
+            Dictionary<string, object> cur = run.PendingAction;
+            if (cur == null) return null;
+            if (Utils.GetValue<string>(cur, "type", "") != "openpack") return null;
+            return Utils.GetValue<List<object>>(cur, "_cards");
         }
 
         // Merge: global+asc -> action (per-field within rarity). null `action` = global+asc only.

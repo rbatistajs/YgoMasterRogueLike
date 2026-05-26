@@ -24,21 +24,19 @@ namespace YgoMaster
             dto.Remove("pendingAction");
             Dictionary<string, object> actionPrompt = RoguelikeActionEngine.Project(run);
             if (actionPrompt != null) dto["action"] = actionPrompt;
-            // openpack: project $.Gacha (vanilla shape) + $.Roguelike.pendingPack if PendingPack is set.
-            // Self-heal: a stale empty pack (size <= 0) from an earlier broken stage gets cleared here.
-            if (run.PendingPack != null && Utils.GetValue<int>(run.PendingPack, "size") <= 0)
+            // openpack rides along via $.Gacha (vanilla shape) when the pending action is one.
+            string actionType = actionPrompt != null ? Utils.GetValue<string>(actionPrompt, "type", "") : "";
+            if (actionType == "openpack")
             {
-                Console.WriteLine("[Roguelike] WriteRun: clearing stale empty PendingPack");
-                run.PendingPack = null;
-            }
-            dto.Remove("pendingPack");
-            if (run.PendingPack != null)
-            {
-                Dictionary<string, object> ppProj = BuildPendingPackProjection(run.PendingPack);
-                Dictionary<string, object> gachaProj = BuildGachaProjection(run.PendingPack);
-                Console.WriteLine("[Roguelike] WriteRun: projecting pendingPack token=" + Utils.GetValue<int>(ppProj, "token") + " size=" + Utils.GetValue<int>(ppProj, "size") + " gachaPacks=" + ((List<object>)((Dictionary<string, object>)gachaProj["drawInfo"])["packs"]).Count);
-                dto["pendingPack"] = ppProj;
-                request.Response["Gacha"] = gachaProj;
+                List<object> cards = RoguelikeActionEngine.PendingOpenPackCards(run);
+                if (cards != null && cards.Count > 0)
+                {
+                    Dictionary<string, object> gachaProj = BuildGachaProjection(cards);
+                    request.Response["Gacha"] = gachaProj;
+                    Console.WriteLine("[Roguelike] WriteRun: projecting openpack token=" + Utils.GetValue<int>(actionPrompt, "token") +
+                        " gachaPacks=" + ((List<object>)((Dictionary<string, object>)gachaProj["drawInfo"])["packs"]).Count);
+                }
+                else request.Remove("Gacha");
             }
             else
             {
@@ -233,18 +231,20 @@ namespace YgoMaster
             Console.WriteLine("[Roguelike] encounter_action: enc=" + (enc != null) + " action=" + (enc != null && enc.Action != null));
             if (enc != null && enc.Action != null) RoguelikeActionEngine.Start(run, enc.Action, dataDirectory, Regulation);
             else Console.WriteLine("[Roguelike] encounter_action: '" + id + "' not found or has no action");
-            Console.WriteLine("[Roguelike] encounter_action post: PendingPack=" + (run.PendingPack != null) + " PendingAction=" + (run.PendingAction != null) + " token=" + run.ActionToken);
+            Console.WriteLine("[Roguelike] encounter_action post: PendingAction=" + (run.PendingAction != null) + " token=" + run.ActionToken);
             run.Save(dir);
             WriteRun(request, run);
         }
 
-        // Resolve the current action prompt with the player's choice; the engine settles on the next.
+        // Resolve the current action prompt with the player's payload (per-type: options→choice,
+        // openpack→picks). The engine validates token + payload, advances on success; on failure
+        // (stale/invalid) we set ResultCode so the client can react.
         void Act_RoguelikeActionRespond(GameServerWebRequest request)
         {
             string dir = GetPlayerDirectory(request.Player);
             RoguelikeRun run = RoguelikeRun.Load(dir);
-            int choice = request.ActParams != null ? Utils.GetValue<int>(request.ActParams, "choice", -1) : -1;
-            RoguelikeActionEngine.Respond(run, choice, dataDirectory, Regulation);
+            bool ok = RoguelikeActionEngine.Respond(run, request.ActParams, dataDirectory, Regulation);
+            if (!ok) request.ResultCode = -1;
             run.Save(dir);
             WriteRun(request, run);
         }
@@ -592,112 +592,18 @@ namespace YgoMaster
             WriteRun(request, new RoguelikeRun { Active = false });
         }
 
-        // Validate picks, commit cards to pool + deck, clear PendingPack, advance the action engine.
-        void Act_RoguelikePackFinalize(GameServerWebRequest request)
+        // Rehydrate the vanilla $.Gacha shape from the rolled openpack cards: 1 entry per pack,
+        // cardInfo[].mrk = cid. Used by WriteRun when the pending action is an openpack.
+        //
+        // Order: same as `cards` (server _cards) — rarity DESC + cid ASC per pack. The Result VC
+        // applies a stable rarity-DESC sort to whatever we feed it, so matching the server order
+        // here gives anim == result and lets the visual click index double as the server _cards
+        // index. We tried inverting (cardInfo ASC for a build-up anim, _cards DESC for result),
+        // but the Result re-sort preserves our input's relative order within a rarity, which
+        // de-synced anim vs. result. Single sort everywhere is the trade-off for correctness.
+        static Dictionary<string, object> BuildGachaProjection(List<object> cards)
         {
-            string dir = GetPlayerDirectory(request.Player);
-            RoguelikeRun run = RoguelikeRun.Load(dir);
-            if (run == null || !run.Active || run.PendingPack == null)
-            {
-                WriteRun(request, run ?? new RoguelikeRun { Active = false });
-                return; // stale; already resolved on reentry
-            }
-            int token = Utils.GetValue<int>(request.ActParams, "token");
-            int expected = Utils.GetValue<int>(run.PendingPack, "token");
-            if (token != expected)
-            {
-                WriteRun(request, run);
-                return; // stale token
-            }
-
-            List<object> picksRaw = Utils.GetValue<List<object>>(request.ActParams, "picks") ?? new List<object>();
-            List<object> cards = Utils.GetValue<List<object>>(run.PendingPack, "cards");
-            int size = Utils.GetValue<int>(run.PendingPack, "size");
-            string mode = Utils.GetValue<string>(run.PendingPack, "mode");
-            int pickRequired = Utils.GetValue<int>(run.PendingPack, "pick");
-
-            HashSet<int> picks = new HashSet<int>();
-            foreach (object o in picksRaw) { int i; try { i = Convert.ToInt32(o); } catch { continue; } picks.Add(i); }
-            bool valid = true;
-            foreach (int i in picks) if (i < 0 || i >= size) { valid = false; break; }
-            if (mode == "keep" && picks.Count != size) valid = false;
-            if (mode == "pick" && picks.Count != pickRequired) valid = false;
-            if (!valid)
-            {
-                request.ResultCode = -1;
-                WriteRun(request, run);
-                return;
-            }
-
-            if (cards != null)
-                foreach (int idx in picks)
-                {
-                    Dictionary<string, object> c = cards[idx] as Dictionary<string, object>;
-                    if (c == null) continue;
-                    int cid = Utils.GetValue<int>(c, "cid");
-                    run.AddCard(cid, 1);
-                    AddCidToRunDeck(run, cid);
-                }
-
-            Dictionary<string, object> next = Utils.GetValue<Dictionary<string, object>>(run.PendingPack, "next");
-            run.PendingPack = null;
-
-            // Advance the engine (mirrors Act_RoguelikeActionRespond's tail path).
-            RoguelikeActionEngine.Start(run, next, dataDirectory, Regulation);
-
-            run.Save(dir);
-            WriteRun(request, run);
-        }
-
-        // Place cid in the correct deck section (Main or Extra). Creates minimal structure if missing.
-        void AddCidToRunDeck(RoguelikeRun run, int cid)
-        {
-            if (run.Deck == null) run.Deck = new Dictionary<string, object>();
-
-            // Inline get-or-create for run.Deck["deck"] (the DeckInfo dict shape).
-            object deckObj;
-            Dictionary<string, object> deckInner;
-            if (!run.Deck.TryGetValue("deck", out deckObj) || !(deckObj is Dictionary<string, object>))
-            {
-                deckInner = new Dictionary<string, object>();
-                run.Deck["deck"] = deckInner;
-            }
-            else { deckInner = (Dictionary<string, object>)deckObj; }
-
-            string section = RoguelikeCardPool.IsCardExtraDeck(dataDirectory, cid) ? "e" : "m";
-            object secObj;
-            Dictionary<string, object> sec;
-            if (!deckInner.TryGetValue(section, out secObj) || !(secObj is Dictionary<string, object>))
-            {
-                sec = new Dictionary<string, object>();
-                deckInner[section] = sec;
-            }
-            else { sec = (Dictionary<string, object>)secObj; }
-
-            List<object> ids = Utils.GetValue<List<object>>(sec, "ids") ?? new List<object>();
-            List<object> rs  = Utils.GetValue<List<object>>(sec, "r")   ?? new List<object>();
-            ids.Add(cid); rs.Add(1);
-            sec["ids"] = ids; sec["r"] = rs;
-        }
-
-
-        // Compact projection for the roguelike-side driver (can't rely solely on $.Gacha — vanilla shop fills it too).
-        static Dictionary<string, object> BuildPendingPackProjection(Dictionary<string, object> pack)
-        {
-            return new Dictionary<string, object>
-            {
-                { "token",  Utils.GetValue<int>(pack, "token") },
-                { "mode",   Utils.GetValue<string>(pack, "mode") },
-                { "pick",   Utils.GetValue<int>(pack, "pick") },
-                { "size",   Utils.GetValue<int>(pack, "size") },
-                { "labels", Utils.GetValue<Dictionary<string, object>>(pack, "labels") ?? new Dictionary<string, object>() },
-            };
-        }
-
-        // Rehydrate the vanilla $.Gacha shape: 1 entry per pack, cardInfo[].mrk = cid.
-        static Dictionary<string, object> BuildGachaProjection(Dictionary<string, object> pack)
-        {
-            List<object> cards = Utils.GetValue<List<object>>(pack, "cards") ?? new List<object>();
+            if (cards == null) cards = new List<object>();
             // Group by packIdx
             Dictionary<int, List<Dictionary<string, object>>> byPack = new Dictionary<int, List<Dictionary<string, object>>>();
             foreach (object o in cards)
@@ -716,6 +622,18 @@ namespace YgoMaster
             foreach (int pi in orderedKeys)
             {
                 List<Dictionary<string, object>> kv_Value = byPack[pi];
+                // Animation order: rarity ASC, cid ASC (low rarity first, big reveal last).
+                // _cards on the engine side is rarity DESC — we don't touch it; this sort is
+                // anim-only.
+                kv_Value.Sort((a, b) =>
+                {
+                    int ra = Utils.GetValue<int>(a, "rarity");
+                    int rb = Utils.GetValue<int>(b, "rarity");
+                    if (ra != rb) return ra.CompareTo(rb);
+                    int ca = Utils.GetValue<int>(a, "cid");
+                    int cb = Utils.GetValue<int>(b, "cid");
+                    return ca.CompareTo(cb);
+                });
                 List<object> cardInfo = new List<object>();
                 foreach (Dictionary<string, object> c in kv_Value)
                 {

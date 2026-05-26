@@ -1,40 +1,68 @@
 using System;
+using System.Collections.Generic;
 
 namespace YgoMasterClient
 {
-    // Renders the server's current action prompt ($.Roguelike.action) and sends the player's choice
-    // back. Driven by RoguelikeFlow.OnNetworkComplete; token dedup keeps a prompt from re-opening.
-    //
-    // Prompts use CommonDialogViewController with allowCancel:false (natively non-cancelable — no
-    // cancel button, no tap-outside): message/1-option -> confirmation, 2-option -> yes/no. 3+ options
-    // fall back to the ActionSheet (interim; CommonDialog tops out at 2 tap-buttons).
+    // Single dispatcher for the server's pending action ($.Roguelike.action). Per type:
+    //   options  -> ActionSheet (title header + body message, N labels; non-cancelable)
+    //   message  -> CommonDialog confirmation (single OK; non-cancelable)
+    //   openpack -> push the native CardPackOpen VC; the result hook (RoguelikePackResultHook)
+    //               wires OK to ActionRespondPicks once the player confirms picks.
+    // Token dedup keeps a prompt from re-opening; pumped from RoguelikeMapScreen.Update so it
+    // only fires while the map is visible.
     static class RoguelikeActionDriver
     {
         static int _shownToken = -1;
-        static readonly Action _opt0 = () => RoguelikeApi.ActionRespond(0);
+        // Token of the prompt currently dispatched — captured to a static field because IL2CPP
+        // delegate marshalling can't see closure-captured locals (the instance-method `this` of
+        // a closure display class isn't propagated; only methods with no capture work).
+        // OnOptionSelected/OnMessageConfirm read this on click.
+        static int _activeToken = -1;
         static readonly Action<IntPtr, int> _onSelect = OnOptionSelected;
+        static readonly Action _onMessageConfirm = OnMessageConfirm;
 
         public static void Pump()
         {
             try
             {
-                RoguelikeApi.ActionPrompt p = RoguelikeApi.GetActionPrompt();
+                RoguelikeApi.PendingAction p = RoguelikeApi.GetPendingAction();
                 if (p == null) { _shownToken = -1; return; }
                 if (p.Token == _shownToken) return; // already shown
                 _shownToken = p.Token;
+                _activeToken = p.Token;
+                Console.WriteLine("[Roguelike] action pump: type=" + p.Type + " token=" + p.Token);
 
                 if (p.Type == "message")
+                {
                     YgomGame.Menu.CommonDialogViewController.OpenConfirmationDialog(
-                        p.Title, p.Message, RoguelikeLabels.Get("common.ok", "OK"), _opt0, null, false);
-                else // options -> N-option custom sheet (title header + message body), non-cancelable
+                        p.Title, p.Message, RoguelikeLabels.Get("common.ok", "OK"),
+                        _onMessageConfirm, null, false);
+                }
+                else if (p.Type == "options")
+                {
                     YgomGame.Menu.ActionSheetViewController.OpenCustomSheet(p.Title, p.Message, p.Options ?? new string[0], _onSelect, true);
+                }
+                else if (p.Type == "openpack")
+                {
+                    IntPtr manager = YgomGame.Menu.ContentViewControllerManager.GetManager();
+                    if (manager == IntPtr.Zero) { _shownToken = -1; return; }
+                    IntPtr args = YgomMiniJSON.Json.Deserialize(MiniJSON.Json.Serialize(
+                        new Dictionary<string, object> { { "ForwardResultArgs", null } }));
+                    YgomSystem.UI.ViewControllerManager.PushChildViewControllerArgs(manager, "CardPack/CardPackOpen", args);
+                }
+                else
+                {
+                    Console.WriteLine("[Roguelike] action pump: unknown type '" + p.Type + "'");
+                }
             }
             catch (Exception ex) { Console.WriteLine("[Roguelike] action pump EX: " + ex); }
         }
 
+        static void OnMessageConfirm() { RoguelikeApi.ActionRespond(_activeToken); }
+
         static void OnOptionSelected(IntPtr thisPtr, int index)
         {
-            if (index >= 0) RoguelikeApi.ActionRespond(index);
+            if (index >= 0) RoguelikeApi.ActionRespondChoice(_activeToken, index);
         }
     }
 }

@@ -251,9 +251,12 @@ namespace YgoMasterClient
             }
             // Open a pending action prompt only while the map is on screen (mirrors the pending-duel
             // gate). Token dedup keeps it from re-opening; resolved/chained prompts advance here too.
+            // The action driver is the single dispatcher (options/message/openpack).
             if (IsActive(_go)) RoguelikeActionDriver.Pump();
-            if (IsActive(_go)) RoguelikePackDriver.Pump();
             RoguelikePackResultHook.EnsureRegistered();
+            // Pick-mode CardPict wiring is deferred (vanilla VC populates clones after OnCreatedView);
+            // poll each frame until they appear. No-op when there's no pending wire.
+            RoguelikePackResultHook.Poll();
             if (!_scrollPending || DateTime.UtcNow < _scrollDueAt) return;
             _scrollPending = false;
             // Recompute the target now: the viewport height was 0 at build time (layout not settled).

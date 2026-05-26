@@ -508,9 +508,6 @@ namespace YgoMaster
                                     case "Roguelike.action_respond":
                                         Act_RoguelikeActionRespond(gameServerWebRequest);
                                         break;
-                                    case "Roguelike.pack_finalize":
-                                        Act_RoguelikePackFinalize(gameServerWebRequest);
-                                        break;
                                     default:
                                         Utils.LogInfo("Unhandled act " + actsHeader);
                                         Debug.WriteLine("Unhandled act " + actsHeader + " " + MiniJSON.Json.Serialize(vals));

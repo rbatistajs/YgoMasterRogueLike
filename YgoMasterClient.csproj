@@ -66,7 +66,6 @@
     <Compile Include="YgoMasterClient\SoloVisualNovelChapterView.cs" />
     <Compile Include="YgoMasterClient\Roguelike\RoguelikeApi.cs" />
     <Compile Include="YgoMasterClient\Roguelike\Actions\RoguelikeActionDriver.cs" />
-    <Compile Include="YgoMasterClient\Roguelike\Actions\RoguelikePackDriver.cs" />
     <Compile Include="YgoMasterClient\Roguelike\Actions\RoguelikePackResultHook.cs" />
     <Compile Include="YgoMasterClient\Roguelike\RoguelikeDebug.cs" />
     <Compile Include="YgoMasterClient\Roguelike\RoguelikeDuel.cs" />
