@@ -22,6 +22,47 @@ namespace YgoMasterClient
         static IL2Method _ueAddListener, _ueRemoveAll;
         static IL2Method _selBtnRemoveMouseDown, _selBtnRemoveMouseRelease;
         static IL2Method _selBtnRemoveKeyDown, _selBtnRemoveKeyRelease;
+        // SelectionButton.Click() — programmatically toggle ShowOwnedNumToggle to "on" so the
+        // result lists show owned counts from the start (matches what most players want for the
+        // openpack reward screen).
+        static IL2Method _selBtnClick;
+        // Saved snapshot of $.Cards.have so we can restore the player's collection when our
+        // result VC closes (mirrors the deck editor's swap).
+        static string _savedHave;
+        // SelectionButton PointerCallback events. Neither onDown nor onUp fire on right-click —
+        // the native pipeline only raises pointer events for the primary (left) button. So we
+        // track hover via onEnter/onExit and poll UnityEngine.Input for right-clicks in Update.
+        static IL2Class _pointerCallbackClass;
+        static IL2Method _selBtnAddOnEnter;
+        static IL2Method _selBtnAddOnExit;
+        // UnityEngine.Input.GetMouseButtonDown(int) for right-click detection.
+        static IL2Method _inputGetMouseButtonDown;
+        // Visual index currently under the mouse, -1 if none. Maintained by onEnter/onExit.
+        static int _hoveredIdx = -1;
+        // Cids in visual order, captured during ReorderDrawDatas (which already reads each
+        // entry's "mrk" while sorting). Reused when right-click opens the CardBrowser — no
+        // need to re-walk m_DrawDatas or read AutoReleaseCardMaterial on every click.
+        static int[] _cidsByVisual;
+        // IL2CPP plumbing for hand-built CardBrowser args. MiniJSON's round-trip widens int
+        // to long and arrays to List<object>; the native browser hardcasts to Int32 +
+        // List<int> and NREs otherwise. We build the right shape directly.
+        static IL2Class _int32Class;
+        static IL2Class _dictStrObjClass;          // Dictionary<string, object>
+        static IL2Method _dictStrObjCtor;
+        static IL2Method _dictStrObjItemSet;       // set_Item(string, object)
+        // TMP_Text.text setter — used to update the OK label live as picks toggle. SetTextId
+        // (via BindingTextMeshProUGUI) only takes effect the first time; the binding component
+        // doesn't refresh on repeated assignments, so we write straight to the TMP text field.
+        static IntPtr _tmpTextType;
+        // UnityEngine.UI.Image type + sprite setter — used to swap LimitIcon's sprite for the
+        // selected-card checkmark using a sprite already loaded in the scene.
+        static IntPtr _imageType;
+        static IL2Method _imageSpriteSet;
+        static IntPtr _checkOnSprite;
+        // RectTransform helpers for centering + resizing the LimitIcon over the card (vanilla
+        // anchors it at the corner with a small icon size).
+        static IntPtr _rectTransformType;
+        static IL2Method _rtSetAnchorMin, _rtSetAnchorMax, _rtSetAnchoredPosition, _rtSetPivot, _rtSetSizeDelta;
         // m_DrawDatas reorder: reflect into CardPackOpenResultViewController and the
         // IL2Dictionary<string, object> indexer so we can read "mrk"/"rarity" from each entry
         // and rewrite the list in our desired order BEFORE the native VC builds clones from it.
@@ -36,6 +77,10 @@ namespace YgoMasterClient
         static int _pickRequired;
         static IntPtr _okBtn;
         static List<IntPtr> _pictGos;        // GameObjects of each CardPict, in visual index order
+        // Confirm label template — server passes a string with optional {0}/{1} placeholders
+        // (e.g. "Confirmar {0}/{1}"). We re-format it whenever the selected count changes so
+        // the OK button label tracks progress live. Cached because UpdateOkLabel runs per click.
+        static string _confirmTemplate;
         // Deferred wiring: OnCreatedView fires before the vanilla VC instantiates
         // PackCardGroupTemplate(Clone). We capture Content + the pick request here, and
         // Poll() (driven from RoguelikeMapScreen.Update) retries each frame until clones
@@ -50,6 +95,9 @@ namespace YgoMasterClient
         // no this" path in DelegateHelper, which silently drops any captured target.
         // Cap chosen above any realistic pack size (5 in our smokes; bump if you ever roll more).
         const int MaxPickHandlers = 32;
+        // Left-click selection: closure-free lambdas over literal indices (compiler emits
+        // them as static methods so the IL2CPP delegate marshalling has no captured target
+        // to drop). Wired via onClick UnityEvent through WireButton.
         static readonly Action[] _pictHandlers = new Action[]
         {
             () => ToggleCard(0),  () => ToggleCard(1),  () => ToggleCard(2),  () => ToggleCard(3),
@@ -60,6 +108,30 @@ namespace YgoMasterClient
             () => ToggleCard(20), () => ToggleCard(21), () => ToggleCard(22), () => ToggleCard(23),
             () => ToggleCard(24), () => ToggleCard(25), () => ToggleCard(26), () => ToggleCard(27),
             () => ToggleCard(28), () => ToggleCard(29), () => ToggleCard(30), () => ToggleCard(31),
+        };
+        // Hover-tracking handlers — closure-free literals as usual (compiler emits static methods
+        // so the IL2CPP delegate marshalling has no captured target to lose).
+        static readonly Action<IntPtr>[] _pictEnterHandlers = new Action<IntPtr>[]
+        {
+            _ => OnPictEnter(0),  _ => OnPictEnter(1),  _ => OnPictEnter(2),  _ => OnPictEnter(3),
+            _ => OnPictEnter(4),  _ => OnPictEnter(5),  _ => OnPictEnter(6),  _ => OnPictEnter(7),
+            _ => OnPictEnter(8),  _ => OnPictEnter(9),  _ => OnPictEnter(10), _ => OnPictEnter(11),
+            _ => OnPictEnter(12), _ => OnPictEnter(13), _ => OnPictEnter(14), _ => OnPictEnter(15),
+            _ => OnPictEnter(16), _ => OnPictEnter(17), _ => OnPictEnter(18), _ => OnPictEnter(19),
+            _ => OnPictEnter(20), _ => OnPictEnter(21), _ => OnPictEnter(22), _ => OnPictEnter(23),
+            _ => OnPictEnter(24), _ => OnPictEnter(25), _ => OnPictEnter(26), _ => OnPictEnter(27),
+            _ => OnPictEnter(28), _ => OnPictEnter(29), _ => OnPictEnter(30), _ => OnPictEnter(31),
+        };
+        static readonly Action<IntPtr>[] _pictExitHandlers = new Action<IntPtr>[]
+        {
+            _ => OnPictExit(0),  _ => OnPictExit(1),  _ => OnPictExit(2),  _ => OnPictExit(3),
+            _ => OnPictExit(4),  _ => OnPictExit(5),  _ => OnPictExit(6),  _ => OnPictExit(7),
+            _ => OnPictExit(8),  _ => OnPictExit(9),  _ => OnPictExit(10), _ => OnPictExit(11),
+            _ => OnPictExit(12), _ => OnPictExit(13), _ => OnPictExit(14), _ => OnPictExit(15),
+            _ => OnPictExit(16), _ => OnPictExit(17), _ => OnPictExit(18), _ => OnPictExit(19),
+            _ => OnPictExit(20), _ => OnPictExit(21), _ => OnPictExit(22), _ => OnPictExit(23),
+            _ => OnPictExit(24), _ => OnPictExit(25), _ => OnPictExit(26), _ => OnPictExit(27),
+            _ => OnPictExit(28), _ => OnPictExit(29), _ => OnPictExit(30), _ => OnPictExit(31),
         };
 
         static RoguelikePackResultHook()
@@ -77,6 +149,7 @@ namespace YgoMasterClient
                 _selBtnRemoveMouseRelease = selBtn.GetMethod("RemoveClickShortCutMouseRelease");
                 _selBtnRemoveKeyDown = selBtn.GetMethod("RemoveClickShortCutKeyDown", x => x.GetParameters().Length == 1);
                 _selBtnRemoveKeyRelease = selBtn.GetMethod("RemoveClickShortCutKeyRelease", x => x.GetParameters().Length == 1);
+                _selBtnClick = selBtn.GetMethod("Click");
                 IL2Assembly core = Assembler.GetAssembly("UnityEngine.CoreModule");
                 IL2Class ue = core.GetClass("UnityEvent", "UnityEngine.Events");
                 _ueAddListener = ue.GetMethod("AddListener");
@@ -90,7 +163,34 @@ namespace YgoMasterClient
                 IL2Class dictGeneric = mscor.GetClass("Dictionary`2", "System.Collections.Generic")
                     .MakeGenericType(new IntPtr[] { stringClass.IL2Typeof(), _objectClass.IL2Typeof() });
                 _dictItemGet = dictGeneric.GetProperty("Item").GetGetMethod();
-                Console.WriteLine("[Roguelike] pack result hook installed");
+                // Reused below to hand-build CardBrowser args with int32 / List<int> shapes.
+                _int32Class = typeof(int).GetClass();
+                _dictStrObjClass = dictGeneric;
+                _dictStrObjCtor = dictGeneric.GetMethod(".ctor", m => m.GetParameters().Length == 0);
+                _dictStrObjItemSet = dictGeneric.GetProperty("Item").GetSetMethod();
+                _tmpTextType = Assembler.GetAssembly("Unity.TextMeshPro").GetClass("TMP_Text", "TMPro").IL2Typeof();
+                IL2Class imageClass = Assembler.GetAssembly("UnityEngine.UI").GetClass("Image", "UnityEngine.UI");
+                _imageType = imageClass.IL2Typeof();
+                _imageSpriteSet = imageClass.GetProperty("sprite").GetSetMethod();
+                IL2Class rectTf = core.GetClass("RectTransform", "UnityEngine");
+                _rectTransformType = rectTf.IL2Typeof();
+                _rtSetAnchorMin = rectTf.GetProperty("anchorMin").GetSetMethod();
+                _rtSetAnchorMax = rectTf.GetProperty("anchorMax").GetSetMethod();
+                _rtSetAnchoredPosition = rectTf.GetProperty("anchoredPosition").GetSetMethod();
+                _rtSetPivot = rectTf.GetProperty("pivot").GetSetMethod();
+                _rtSetSizeDelta = rectTf.GetProperty("sizeDelta").GetSetMethod();
+                // PointerCallback (nested in SelectionButton) for hover tracking. We don't try
+                // to wire onDown/onUp — neither fires for right-click in this VC's pipeline.
+                _pointerCallbackClass = selBtn.GetNestedType("PointerCallback");
+                _selBtnAddOnEnter = selBtn.GetMethod("add_onEnter");
+                _selBtnAddOnExit = selBtn.GetMethod("add_onExit");
+                // UnityEngine.Input.GetMouseButtonDown(int button) for polling right-click.
+                IL2Class inputClass = Assembler.GetAssembly("UnityEngine.InputLegacyModule")
+                    .GetClass("Input", "UnityEngine");
+                _inputGetMouseButtonDown = inputClass.GetMethod("GetMouseButtonDown",
+                    m => m.GetParameters().Length == 1 && m.GetParameters()[0].Type.Name == typeof(int).FullName);
+                Console.WriteLine("[Roguelike] pack result hook installed: enter=" + (_selBtnAddOnEnter != null) +
+                    " exit=" + (_selBtnAddOnExit != null) + " input=" + (_inputGetMouseButtonDown != null));
             }
             catch (Exception ex) { Console.WriteLine("[Roguelike] pack result hook init EX: " + ex); }
         }
@@ -108,15 +208,116 @@ namespace YgoMasterClient
             _pictGos = new List<IntPtr>();
             EnumerateCardPicts(_pendingContent, _pictGos);
             if (_pictGos.Count == 0) return; // not populated yet, try next frame
-            Console.WriteLine("[Roguelike] pack pick: wiring " + _pictGos.Count + " CardPicts");
+            Console.WriteLine("[Roguelike] pack pick: wiring " + _pictGos.Count + " CardPicts (left=select, right=preview via hover+Input poll)");
             for (int i = 0; i < _pictGos.Count; i++)
             {
                 IntPtr pict = _pictGos[i];
-                if (i < MaxPickHandlers) WireButton(pict, _pictHandlers[i]);
+                if (i < MaxPickHandlers)
+                {
+                    // Left = select (replace native onClick with our toggle, neutralize esc/right
+                    // shortcuts so they can't fire it).
+                    WireButton(pict, _pictHandlers[i]);
+                    StripShortCuts(pict);
+                    // Hover tracking — Update poll reads _hoveredIdx + Input.GetMouseButtonDown(1)
+                    // to open the CardBrowser.
+                    WirePictPointer(pict, _selBtnAddOnEnter, _pictEnterHandlers[i]);
+                    WirePictPointer(pict, _selBtnAddOnExit, _pictExitHandlers[i]);
+                }
                 else Console.WriteLine("[Roguelike] pack pick: card " + i + " > MaxPickHandlers (" + MaxPickHandlers + "), not selectable");
                 SetSelectVisual(pict, false);
             }
+            _hoveredIdx = -1;
             _wirePending = false;
+        }
+
+        // Attach a PointerCallback handler to one of SelectionButton's pointer events
+        // (onEnter/onExit). The native pipeline raises these reliably on hover.
+        static void WirePictPointer(IntPtr buttonGo, IL2Method addMethod, Action<IntPtr> handler)
+        {
+            IntPtr sel = GameObject.GetComponent(buttonGo, _selectionButtonType);
+            if (sel == IntPtr.Zero || addMethod == null || _pointerCallbackClass == null) return;
+            IntPtr cb = UnityEngine.Events._UnityAction.CreateDelegate(handler, IntPtr.Zero, _pointerCallbackClass);
+            addMethod.Invoke(sel, new IntPtr[] { cb });
+        }
+
+        static void OnPictEnter(int idx) { _hoveredIdx = idx; }
+        static void OnPictExit(int idx)  { if (_hoveredIdx == idx) _hoveredIdx = -1; }
+
+        // Polled per-frame from RoguelikeMapScreen.Update via Poll(). When right-click
+        // (mouse button 1) fires AND we're hovering a pict, open the CardBrowser. We use
+        // UnityEngine.Input.GetMouseButtonDown because SelectionButton's pointer events
+        // (onDown/onUp) only fire for the primary button.
+        public static void PollRightClick()
+        {
+            if (_inputGetMouseButtonDown == null || _hoveredIdx < 0) return;
+            int btn = 1;
+            IL2Object r = _inputGetMouseButtonDown.Invoke(IntPtr.Zero, new IntPtr[] { new IntPtr(&btn) });
+            bool pressed = r != null && r.GetValueRef<csbool>();
+            if (!pressed) return;
+            OpenCardBrowser(_hoveredIdx);
+        }
+
+        // Push CardBrowserViewController on top of the result VC, starting on the clicked card.
+        // Args shape — captured from a vanilla open (see `vcpushlog`):
+        //   { startIdx:int, mrks:List<int>, styleIds:List<int>, regulationId:int }
+        // styleIds = 1 (CardStyleRarity.Normal) per card — 0 NREs in the native VC.
+        // regulationId comes from the active roguelike run (pool's banlist).
+        static void OpenCardBrowser(int startIdx)
+        {
+            try
+            {
+                if (_cidsByVisual == null || _cidsByVisual.Length == 0)
+                {
+                    Console.WriteLine("[Roguelike] OpenCardBrowser: no cids captured (ReorderDrawDatas didn't run?)");
+                    return;
+                }
+                int regulationId = RoguelikeApi.RegulationId();
+                IntPtr argsPtr = BuildCardBrowserArgs(startIdx, _cidsByVisual, regulationId);
+                if (argsPtr == IntPtr.Zero) { Console.WriteLine("[Roguelike] OpenCardBrowser: BuildCardBrowserArgs failed"); return; }
+                // CardBrowser is an overlay VC (lives on OverlayCanvas via DialogManager).
+                IntPtr manager = YgomGame.Menu.DialogViewControllerManager.GetManager();
+                if (manager == IntPtr.Zero) { Console.WriteLine("[Roguelike] OpenCardBrowser: no dialog manager"); return; }
+                YgomSystem.UI.ViewControllerManager.PushChildViewControllerArgs(manager, "CardBrowser", argsPtr);
+                Console.WriteLine("[Roguelike] OpenCardBrowser: pushed startIdx=" + startIdx + " mrks=" + _cidsByVisual.Length + " regulationId=" + regulationId);
+            }
+            catch (Exception ex) { Console.WriteLine("[Roguelike] OpenCardBrowser EX: " + ex); }
+        }
+
+        // Build CardBrowser args as a proper IL2CPP Dictionary<string, object> with int + List<int>
+        // values (matching what vanilla pushes — see `vcpushlog` capture). Returns IntPtr.Zero on
+        // failure. Doing it by hand because MiniJSON serialization widens int -> long and
+        // arrays -> List<object>, which the native browser doesn't accept.
+        static IntPtr BuildCardBrowserArgs(int startIdx, int[] cids, int regulationId)
+        {
+            if (_dictStrObjClass == null || _dictStrObjCtor == null || _dictStrObjItemSet == null || _int32Class == null) return IntPtr.Zero;
+            // Dictionary<string, object> instance.
+            IntPtr dict = Import.Object.il2cpp_object_new(_dictStrObjClass.ptr);
+            _dictStrObjCtor.Invoke(dict);
+            // Boxed Int32 for the two scalar fields.
+            int siCopy = startIdx, riCopy = regulationId;
+            IntPtr startIdxBoxed = Import.Object.il2cpp_value_box(_int32Class.ptr, new IntPtr(&siCopy));
+            IntPtr regIdBoxed   = Import.Object.il2cpp_value_box(_int32Class.ptr, new IntPtr(&riCopy));
+            // List<int> for mrks + styleIds.
+            IL2ListExplicit mrksList = new IL2ListExplicit(IntPtr.Zero, _int32Class, true);
+            IL2ListExplicit stylesList = new IL2ListExplicit(IntPtr.Zero, _int32Class, true);
+            for (int i = 0; i < cids.Length; i++)
+            {
+                int cid = cids[i];
+                mrksList.Add(new IntPtr(&cid));
+                int style = 1;
+                stylesList.Add(new IntPtr(&style));
+            }
+            // Set each key. set_Item(string, object) → key boxed as IL2String, value already a boxed object.
+            DictSet(dict, "startIdx", startIdxBoxed);
+            DictSet(dict, "mrks", mrksList.ptr);
+            DictSet(dict, "styleIds", stylesList.ptr);
+            DictSet(dict, "regulationId", regIdBoxed);
+            return dict;
+        }
+
+        static void DictSet(IntPtr dict, string key, IntPtr boxedValue)
+        {
+            _dictStrObjItemSet.Invoke(dict, new IntPtr[] { new IL2String(key).ptr, boxedValue, _dictStrObjItemSet.ptr });
         }
 
         // Re-sort the VC's m_DrawDatas list (List<Dictionary<string, object>>) in place by
@@ -148,7 +349,13 @@ namespace YgoMasterClient
                 if (rars[a] != rars[b]) return rars[b].CompareTo(rars[a]); // rarity DESC
                 return mrks[a].CompareTo(mrks[b]);                          // mrk ASC tiebreaker
             });
-            for (int i = 0; i < count; i++) list[i] = ptrs[order[i]];
+            int[] cidsByVisual = new int[count];
+            for (int i = 0; i < count; i++)
+            {
+                list[i] = ptrs[order[i]];
+                cidsByVisual[i] = mrks[order[i]];
+            }
+            _cidsByVisual = cidsByVisual;
             Console.WriteLine("[Roguelike] m_DrawDatas reordered (" + count + " entries) rarity DESC + mrk ASC");
         }
 
@@ -167,48 +374,85 @@ namespace YgoMasterClient
 
         static void OnCreatedView(IntPtr thisPtr)
         {
-            // Before the native VC consumes m_DrawDatas to instantiate PackCardGroupTemplate(Clone)
-            // children, re-sort the list rarity DESC + mrk ASC. Server _cards is sorted the same
-            // way, so visual click indices line up 1:1 with the server's _cards[] — no per-pict
-            // m_Cardid lookup needed.
-            try { ReorderDrawDatas(thisPtr); }
-            catch (Exception ex) { Console.WriteLine("[Roguelike] pack result hook reorder EX: " + ex); }
+            // Gate by the global flow flag: only customize this VC while the player is
+            // engaged in a roguelike (RoguelikeFlow.InRoguelike). Outside the run — shop,
+            // menu, free-play — leave the result VC fully vanilla.
+            bool ours = RoguelikeFlow.InRoguelike;
+            if (ours)
+            {
+                try { ReorderDrawDatas(thisPtr); }
+                catch (Exception ex) { Console.WriteLine("[Roguelike] pack result hook reorder EX: " + ex); }
+                // Swap the global collection ($.Cards.have) for the run's owned-card map so the
+                // result screen's per-card "you own N" counters reflect run state. Restored when
+                // the user confirms via OnOkClick (which closes the VC). Mirrors the deck editor.
+                try { SwapInRunCollection(); }
+                catch (Exception ex) { Console.WriteLine("[Roguelike] pack result hook swap EX: " + ex); }
+            }
             _hook.Original(thisPtr);
+            if (!ours) return; // not our flow: untouched from here on too
             try
             {
                 RoguelikeApi.PendingAction p = RoguelikeApi.GetPendingAction();
-                if (p == null || p.Type != "openpack") return; // vanilla shop pack: untouched
+                if (p == null || p.Type != "openpack") return;
+                Console.WriteLine("[Roguelike] pack result labels: mode=" + p.Mode +
+                    " titlePick='" + p.TextLabels.TitlePick + "'" +
+                    " titleKeep='" + p.TextLabels.TitleKeep + "'" +
+                    " confirm='" + p.TextLabels.Confirm + "'");
 
                 IntPtr go = Component.GetGameObject(thisPtr);
 
                 // (1) Optional override of the "Cards obtidos" sub-label (UpperInfo>LabelRoot>LabelText).
                 string title = p.Mode == "pick" ? p.TextLabels.TitlePick : p.TextLabels.TitleKeep;
+                IntPtr upperInfo = GameObject.FindGameObjectByName(go, "UpperInfo");
                 if (!string.IsNullOrEmpty(title))
                 {
-                    IntPtr upperInfo = GameObject.FindGameObjectByName(go, "UpperInfo");
                     IntPtr subLabel = upperInfo != IntPtr.Zero
                         ? GameObject.FindGameObjectByPath(upperInfo, "LabelRoot.LabelText")
                         : IntPtr.Zero;
                     if (subLabel != IntPtr.Zero) SetBindingText(subLabel, null, title);
                 }
+                // (1b) Instructional sub-text: vanilla's "SendedPresentText" sibling under
+                // UpperInfo is normally inactive — we hijack it for a right-click hint.
+                // Server-configurable via labels.
+                if (upperInfo != IntPtr.Zero && p.Mode == "pick")
+                {
+                    IntPtr instruction = GameObject.FindGameObjectByPath(upperInfo, "SendedPresentText");
+                    if (instruction != IntPtr.Zero)
+                    {
+                        string hint = RoguelikeLabels.Get("pack.pick.hint", "Clique com o botão direito para ver detalhes da carta");
+                        GameObject.SetActive(instruction, true);
+                        SetBindingText(instruction, null, hint);
+                    }
+                }
 
                 // (2) Wire OK button: only left-click can fire OnOkClick. Right-click and ESC
                 //     are neutralized by removing the SelectionButton's mouse + key shortcut bindings.
                 IntPtr okBtn = GameObject.FindGameObjectByName(go, "OKButton");
+                _confirmTemplate = p.TextLabels.Confirm;
                 if (okBtn != IntPtr.Zero)
                 {
-                    if (!string.IsNullOrEmpty(p.TextLabels.Confirm))
-                        SetBindingText(okBtn, "TextTMP", p.TextLabels.Confirm);
                     WireButton(okBtn, OnOkClick);
                     StripShortCuts(okBtn);
                 }
+                // (3) Default "Show owned count" toggle to ON — players usually want to see how
+                // many of each card they already have in the run collection on the result screen.
+                IntPtr ownedToggle = GameObject.FindGameObjectByPath(go,
+                    "CardPackOpenResultUI(Clone).TitleSafeArea.TitleGroup.ShowOwnedNumToggle");
+                if (ownedToggle != IntPtr.Zero) ClickButton(ownedToggle);
 
-                if (p.Mode != "pick") return;
+                if (p.Mode != "pick")
+                {
+                    // Keep mode: no placeholders meaningful; render confirm template as-is.
+                    if (okBtn != IntPtr.Zero && !string.IsNullOrEmpty(_confirmTemplate))
+                        SetBindingText(okBtn, "TextTMP", _confirmTemplate);
+                    return;
+                }
 
                 _selected = new HashSet<int>();
                 _pickRequired = p.Pick;
                 _okBtn = okBtn;
                 SetButtonInteractable(okBtn, false);
+                UpdateOkLabel(initial: true);
 
                 IntPtr obtainedRoot = GameObject.FindGameObjectByName(go, "ObtainedCardsRoot");
                 _pendingContent = obtainedRoot != IntPtr.Zero
@@ -237,7 +481,41 @@ namespace YgoMasterClient
                 picks = Enumerable.Range(0, p.Size).ToArray();
             }
             Console.WriteLine("[Roguelike] OK clicked, finalize (" + p.Mode + ") picks=[" + string.Join(",", picks) + "]");
+            // Restore the player's real collection before sending picks — the response will refresh
+            // $.Cards.have with the server's updated counts anyway, but this keeps any UI that polls
+            // ClientWork during the brief gap (animations / focus changes) showing the right data.
+            try { RestorePlayerCollection(); } catch (Exception ex) { Console.WriteLine("[Roguelike] restore EX: " + ex); }
             RoguelikeApi.ActionRespondPicks(p.Token, picks);
+        }
+
+        // Swap $.Cards.have to the run's owned-card map so the result screen's per-card "owned"
+        // counters reflect run state (mirrors RoguelikeDeckEditScreen). _savedHave holds the
+        // original; restored on OK.
+        static void SwapInRunCollection()
+        {
+            string runCards = YgomSystem.Utility.ClientWork.SerializePath("Roguelike.Cards");
+            if (string.IsNullOrEmpty(runCards) || runCards == "{}") return;
+            _savedHave = YgomSystem.Utility.ClientWork.SerializePath("$.Cards.have");
+            YgomSystem.Utility.ClientWork.DeleteByJsonPath("Cards.have");
+            YgomSystem.Utility.ClientWork.UpdateJson("{\"Cards\":{\"have\":" + runCards + "}}");
+        }
+
+        static void RestorePlayerCollection()
+        {
+            if (_savedHave == null) return;
+            YgomSystem.Utility.ClientWork.DeleteByJsonPath("Cards.have");
+            if (_savedHave != "" && _savedHave != "{}")
+                YgomSystem.Utility.ClientWork.UpdateJson("{\"Cards\":{\"have\":" + _savedHave + "}}");
+            _savedHave = null;
+        }
+
+        // Programmatically click a SelectionButton (used to flip the show-owned toggle to ON
+        // on result open).
+        static void ClickButton(IntPtr buttonGo)
+        {
+            IntPtr sel = GameObject.GetComponent(buttonGo, _selectionButtonType);
+            if (sel == IntPtr.Zero || _selBtnClick == null) return;
+            _selBtnClick.Invoke(sel);
         }
 
         // Remove all mouse + key shortcut bindings on a SelectionButton so right-click,
@@ -323,6 +601,32 @@ namespace YgoMasterClient
                 SetSelectVisual(_pictGos[idx], true);
             }
             SetButtonInteractable(_okBtn, _selected.Count == _pickRequired);
+            UpdateOkLabel();
+        }
+
+        // Format _confirmTemplate with the live selection counter and push it to the OK button's
+        // text. Template may contain {0}=selected, {1}=required. No-op if no template.
+        //
+        // initial=true happens once in OnCreatedView: we route through SetBindingText (sets
+        // TextId with the HackID prefix) so the BindingTextMeshProUGUI Start() that follows
+        // picks up our string instead of clobbering it back to "OK" on first frame.
+        // initial=false (toggles) writes straight to TMP_Text.text — the binding's setter
+        // doesn't re-render on repeated assignments after the first one.
+        static void UpdateOkLabel(bool initial = false)
+        {
+            if (_okBtn == IntPtr.Zero || string.IsNullOrEmpty(_confirmTemplate)) return;
+            string label;
+            try { label = string.Format(_confirmTemplate, _selected != null ? _selected.Count : 0, _pickRequired); }
+            catch { label = _confirmTemplate; } // template had no placeholders
+            if (initial)
+            {
+                SetBindingText(_okBtn, "TextTMP", label);
+                return;
+            }
+            IntPtr textGo = GameObject.FindGameObjectByPath(_okBtn, "TextTMP");
+            if (textGo == IntPtr.Zero) return;
+            IntPtr tmp = GameObject.GetComponent(textGo, _tmpTextType);
+            if (tmp != IntPtr.Zero) TMPro.TMP_Text.SetText(tmp, label);
         }
 
         static void SetSelectVisual(IntPtr pict, bool on)
@@ -331,6 +635,61 @@ namespace YgoMasterClient
             if (pcCursor != IntPtr.Zero) GameObject.SetActive(pcCursor, on);
             IntPtr consoleCursor = GameObject.FindGameObjectByPath(pict, "SelectCursorForConsole");
             if (consoleCursor != IntPtr.Zero) GameObject.SetActive(consoleCursor, on);
+            // Highlight + LimitIcon-as-checkmark live one level up under PackCardTemplate(Clone).
+            IntPtr cardTpl = UnityEngine.GameObject.GetTransform(pict);
+            if (cardTpl != IntPtr.Zero)
+            {
+                IntPtr cardTplGo = UnityEngine.Component.GetGameObject(
+                    UnityEngine.Transform.GetParent(cardTpl));
+                if (cardTplGo != IntPtr.Zero)
+                {
+                    IntPtr highlight = GameObject.FindGameObjectByPath(cardTplGo, "Highlight");
+                    if (highlight != IntPtr.Zero) GameObject.SetActive(highlight, on);
+                    IntPtr limitIcon = GameObject.FindGameObjectByPath(cardTplGo, "LimitIcon");
+                    if (limitIcon != IntPtr.Zero)
+                    {
+                        GameObject.SetActive(limitIcon, on);
+                        if (on) SetCheckmarkSprite(limitIcon);
+                    }
+                }
+            }
+        }
+
+        // Swap LimitIcon's Image.sprite for the vanilla checkmark sprite the first time we need
+        // it; subsequent picks reuse the cached reference. Falls back silently if the sprite
+        // isn't loaded yet (the limit icon stays empty but still indicates selection via the
+        // GameObject being active). Also recenters the icon over the card (vanilla anchors it
+        // at the corner) so the checkmark reads as "selected this card", not "limit reached".
+        static void SetCheckmarkSprite(IntPtr limitIcon)
+        {
+            if (_imageSpriteSet == null) return;
+            if (_checkOnSprite == IntPtr.Zero)
+                _checkOnSprite = YgoMasterClient.RoguelikeMapScreen.FindIcon("GUI_CommonButtonToggleM_CheckOn");
+            if (_checkOnSprite == IntPtr.Zero) return;
+            IntPtr img = GameObject.GetComponent(limitIcon, _imageType);
+            if (img == IntPtr.Zero) return;
+            _imageSpriteSet.Invoke(img, new IntPtr[] { _checkOnSprite });
+            CenterRect(limitIcon);
+        }
+
+        // Roughly half the visible card art; tweak if the checkmark feels too big or too small.
+        const float CheckmarkSize = 70f;
+
+        // Recenter + resize a RectTransform over its parent: anchors + pivot at (0.5, 0.5),
+        // zero anchoredPosition, sizeDelta = CheckmarkSize square. Idempotent.
+        static void CenterRect(IntPtr go)
+        {
+            if (_rectTransformType == IntPtr.Zero) return;
+            IntPtr rt = GameObject.GetComponent(go, _rectTransformType);
+            if (rt == IntPtr.Zero) return;
+            AssetHelper.Vector2 half = new AssetHelper.Vector2(0.5f, 0.5f);
+            AssetHelper.Vector2 zero = new AssetHelper.Vector2(0f, 0f);
+            AssetHelper.Vector2 size = new AssetHelper.Vector2(CheckmarkSize, CheckmarkSize);
+            _rtSetAnchorMin.Invoke(rt, new IntPtr[] { new IntPtr(&half) });
+            _rtSetAnchorMax.Invoke(rt, new IntPtr[] { new IntPtr(&half) });
+            _rtSetPivot.Invoke(rt, new IntPtr[] { new IntPtr(&half) });
+            _rtSetAnchoredPosition.Invoke(rt, new IntPtr[] { new IntPtr(&zero) });
+            _rtSetSizeDelta.Invoke(rt, new IntPtr[] { new IntPtr(&size) });
         }
 
         static void SetButtonInteractable(IntPtr btn, bool on)

@@ -1920,6 +1920,26 @@ namespace YgomGame.Menu
         }
     }
 
+    // Overlay (modal) VC manager — used for dialogs like CardBrowser that live on the
+    // OverlayCanvas instead of the ContentCanvas.
+    unsafe static class DialogViewControllerManager
+    {
+        static IL2Method methodGetManager;
+
+        static DialogViewControllerManager()
+        {
+            IL2Assembly assembly = Assembler.GetAssembly("Assembly-CSharp");
+            IL2Class classInfo = assembly.GetClass("DialogViewControllerManager", "YgomGame.Menu");
+            methodGetManager = classInfo.GetMethod("GetManager");
+        }
+
+        public static IntPtr GetManager()
+        {
+            IL2Object result = methodGetManager.Invoke();
+            return result != null ? result.ptr : IntPtr.Zero;
+        }
+    }
+
     // This is only used to hook NotificationStackRemove, unfortunately the ViewController implementation is shared between many functions
     // (and therefore cannot be hooked without impacting other things)
     unsafe static class BaseMenuViewController
@@ -1964,6 +1984,8 @@ namespace YgomSystem.UI
 
         delegate void Del_PushChildViewController(IntPtr thisPtr, IntPtr prefabpathPtr);
         static Hook<Del_PushChildViewController> hookPushChildViewController;
+        delegate void Del_PushChildViewControllerWithArgs(IntPtr thisPtr, IntPtr prefabpathPtr, IntPtr argsPtr);
+        static Hook<Del_PushChildViewControllerWithArgs> hookPushChildViewControllerWithArgs;
         delegate void Del_PopChildViewController2(IntPtr thisPtr, IntPtr popTatget);
         static Hook<Del_PopChildViewController2> hookPopChildViewController2;
         delegate IntPtr Del_LoadViewControllerPrefab(IntPtr thisPtr, IntPtr prefabpathPtr);
@@ -1979,6 +2001,9 @@ namespace YgomSystem.UI
             hookPopChildViewController2 = new Hook<Del_PopChildViewController2>(PopChildViewController, classInfo.GetMethod("PopChildViewController", x => x.GetParameters().Length == 1));
             hookPushChildViewController = new Hook<Del_PushChildViewController>(PushChildViewControllerHook, classInfo.GetMethod("PushChildViewController", x => x.GetParameters().Length == 1 && x.GetParameters()[0].Name == "prefabpath"));
             methodPushChildViewControllerWithArgs = classInfo.GetMethod("PushChildViewController", x => x.GetParameters().Length == 2 && x.GetParameters()[0].Name == "prefabpath");
+            // Diagnostic hook: log the args of every PushChildViewController-with-args call.
+            // Useful for capturing the exact shape vanilla VCs expect (e.g. CardBrowser).
+            hookPushChildViewControllerWithArgs = new Hook<Del_PushChildViewControllerWithArgs>(PushChildViewControllerWithArgsHook, methodPushChildViewControllerWithArgs);
             methodPushChildViewControllerObj = classInfo.GetMethod("PushChildViewController", x => x.GetParameters()[0].Name == "prefab");
             methodSwapBottomChildViewController = classInfo.GetMethod("SwapBottomChildViewController", x => x.GetParameters()[0].Name == "prefabpath");
             methodSwapTopChildViewController = classInfo.GetMethod("SwapTopChildViewController", x => x.GetParameters().Length == 1 && x.GetParameters()[0].Name == "prefabpath");
@@ -2021,6 +2046,20 @@ namespace YgomSystem.UI
         public static void PushChildViewController(IntPtr thisPtr, string prefabpath)
         {
             PushChildViewControllerHook(thisPtr, new IL2String(prefabpath).ptr);
+        }
+
+        // Diagnostic: capture the args payload vanilla VCs receive. When enabled, prints the
+        // JSON shape — useful to learn what the native side actually expects (e.g. CardBrowser).
+        public static bool LogPushArgs;
+        private static void PushChildViewControllerWithArgsHook(IntPtr thisPtr, IntPtr prefabpathPtr, IntPtr argsPtr)
+        {
+            if (LogPushArgs && prefabpathPtr != IntPtr.Zero)
+            {
+                string p = new IL2String(prefabpathPtr).ToString();
+                string a = argsPtr != IntPtr.Zero ? YgomMiniJSON.Json.Serialize(argsPtr) : "(null)";
+                Console.WriteLine("[vc-push] " + p + " args=" + a);
+            }
+            hookPushChildViewControllerWithArgs.Original(thisPtr, prefabpathPtr, argsPtr);
         }
 
         private static void PushChildViewControllerHook(IntPtr thisPtr, IntPtr prefabpathPtr)

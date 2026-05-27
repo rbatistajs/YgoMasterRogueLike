@@ -807,6 +807,10 @@ namespace YgoMasterClient
                     YgomSystem.UI.ViewControllerManager.LogPrefabPaths = !YgomSystem.UI.ViewControllerManager.LogPrefabPaths;
                     Console.WriteLine("[vclog] prefab path logging = " + YgomSystem.UI.ViewControllerManager.LogPrefabPaths);
                     break;
+                case "vcpushlog":// Toggle logging of view controller PushChildViewController args
+                    YgomSystem.UI.ViewControllerManager.LogPushArgs = !YgomSystem.UI.ViewControllerManager.LogPushArgs;
+                    Console.WriteLine("[vcpushlog] push-args logging = " + YgomSystem.UI.ViewControllerManager.LogPushArgs);
+                    break;
                 case "vcstack":// dev: list the view controller stack (index -> class) to console
                     {
                         IntPtr manager = YgomGame.Menu.ContentViewControllerManager.GetManager();
