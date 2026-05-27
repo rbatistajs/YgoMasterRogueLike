@@ -8,6 +8,13 @@ namespace YgoMasterClient
         static bool _lastDuelWin;          // win/loss captured from the engine's Duel.end report
         static int _lastPlayerLp;          // player's remaining LP at Duel.end (run LP carry-over)
 
+        // True while the player is inside the roguelike's UI flow. Set by RoguelikeMapScreen
+        // when its VC GameObject is alive (even if temporarily inactive — e.g. during a pack
+        // open or a duel inside the run, the map GO still exists in the stack) and cleared
+        // when the map VC is destroyed (player navigated back to home). Used by hooks that
+        // customize vanilla VCs (pack result, etc.) so they don't engage outside the run.
+        public static bool InRoguelike;
+
         public static void OnNetworkComplete(string cmd)
         {
             // Home is still active here; grab the PlayerIcon now (it goes inactive under the run screen).

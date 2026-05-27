@@ -243,6 +243,10 @@ namespace YgoMasterClient
         {
             // The map VC was destroyed (left the screen): drop the dangling pointer so we stop poking it.
             if (_go != IntPtr.Zero && !IsAlive(_go)) _go = IntPtr.Zero;
+            // Drive the global "player is inside the roguelike" flag. Alive (even if temporarily
+            // inactive — encounter actions push other VCs on top) means we're still in-flow.
+            // Pointer becomes IntPtr.Zero when the user navigates back to home; flag drops to false.
+            RoguelikeFlow.InRoguelike = _go != IntPtr.Zero;
             // Pending post-duel refresh: apply only once the map is visible again (fresh ClientWork).
             if (_refreshPending && IsActive(_go))
             {
@@ -257,6 +261,10 @@ namespace YgoMasterClient
             // Pick-mode CardPict wiring is deferred (vanilla VC populates clones after OnCreatedView);
             // poll each frame until they appear. No-op when there's no pending wire.
             RoguelikePackResultHook.Poll();
+            // Right-click on a hovered card pict opens the CardBrowser. SelectionButton's
+            // pointer events only fire for the primary button, so we poll UnityEngine.Input
+            // here and look at the hovered pict tracked via onEnter/onExit.
+            RoguelikePackResultHook.PollRightClick();
             if (!_scrollPending || DateTime.UtcNow < _scrollDueAt) return;
             _scrollPending = false;
             // Recompute the target now: the viewport height was 0 at build time (layout not settled).
