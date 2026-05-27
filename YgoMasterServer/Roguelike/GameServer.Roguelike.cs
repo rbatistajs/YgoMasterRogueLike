@@ -33,8 +33,25 @@ namespace YgoMaster
                 {
                     Dictionary<string, object> gachaProj = BuildGachaProjection(cards);
                     request.Response["Gacha"] = gachaProj;
+                    // Per-pack rarity overrides: the native CardPackOpenResultViewController reads
+                    // the UR/SR/N tag from $.Master.CardRare[cid], not from cardInfo[i].rarity.
+                    // The vanilla shop calls WritePerPackRarities for the same reason — without
+                    // this, our pack's tag falls back to whatever CardRare snapshot the client
+                    // got at login (which doesn't reflect our roguelike-specific draw).
+                    Dictionary<string, object> packCardRare = new Dictionary<string, object>();
+                    foreach (object o in cards)
+                    {
+                        Dictionary<string, object> c = o as Dictionary<string, object>;
+                        if (c == null) continue;
+                        int cid = Utils.GetValue<int>(c, "cid");
+                        int rarity = Utils.GetValue<int>(c, "rarity");
+                        packCardRare[cid.ToString()] = rarity;
+                    }
+                    Dictionary<string, object> masterDict = request.GetOrCreateDictionary("Master");
+                    masterDict["CardRare"] = packCardRare;
                     Console.WriteLine("[Roguelike] WriteRun: projecting openpack token=" + Utils.GetValue<int>(actionPrompt, "token") +
-                        " gachaPacks=" + ((List<object>)((Dictionary<string, object>)gachaProj["drawInfo"])["packs"]).Count);
+                        " gachaPacks=" + ((List<object>)((Dictionary<string, object>)gachaProj["drawInfo"])["packs"]).Count +
+                        " masterCardRare=" + packCardRare.Count);
                 }
                 else request.Remove("Gacha");
             }
