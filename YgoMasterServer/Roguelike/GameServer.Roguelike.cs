@@ -33,25 +33,8 @@ namespace YgoMaster
                 {
                     Dictionary<string, object> gachaProj = BuildGachaProjection(cards);
                     request.Response["Gacha"] = gachaProj;
-                    // Per-pack rarity overrides: the native CardPackOpenResultViewController reads
-                    // the UR/SR/N tag from $.Master.CardRare[cid], not from cardInfo[i].rarity.
-                    // The vanilla shop calls WritePerPackRarities for the same reason — without
-                    // this, our pack's tag falls back to whatever CardRare snapshot the client
-                    // got at login (which doesn't reflect our roguelike-specific draw).
-                    Dictionary<string, object> packCardRare = new Dictionary<string, object>();
-                    foreach (object o in cards)
-                    {
-                        Dictionary<string, object> c = o as Dictionary<string, object>;
-                        if (c == null) continue;
-                        int cid = Utils.GetValue<int>(c, "cid");
-                        int rarity = Utils.GetValue<int>(c, "rarity");
-                        packCardRare[cid.ToString()] = rarity;
-                    }
-                    Dictionary<string, object> masterDict = request.GetOrCreateDictionary("Master");
-                    masterDict["CardRare"] = packCardRare;
                     Console.WriteLine("[Roguelike] WriteRun: projecting openpack token=" + Utils.GetValue<int>(actionPrompt, "token") +
-                        " gachaPacks=" + ((List<object>)((Dictionary<string, object>)gachaProj["drawInfo"])["packs"]).Count +
-                        " masterCardRare=" + packCardRare.Count);
+                        " gachaPacks=" + ((List<object>)((Dictionary<string, object>)gachaProj["drawInfo"])["packs"]).Count);
                 }
                 else request.Remove("Gacha");
             }
@@ -59,6 +42,17 @@ namespace YgoMaster
             {
                 // Explicit cleanup: prevent stale pack data from leaking to other screens.
                 request.Remove("Gacha");
+            }
+            // While inside an active run, broadcast the mod's full CardList rarities under
+            // $.Master.CardRare so every native VC that reads the rarity tag (UR/SR/N) — pack
+            // result, deck editor, card preview — reflects the mod's curation instead of the
+            // vanilla snapshot the client got at login. Cheap (single dictionary copy) and
+            // idempotent. Sent on every WriteRun so any state change keeps the client in sync.
+            if (run.Active)
+            {
+                Dictionary<string, object> cardRareDto = new Dictionary<string, object>(CardRare.Count);
+                foreach (KeyValuePair<int, int> kv in CardRare) cardRareDto[kv.Key.ToString()] = kv.Value;
+                request.GetOrCreateDictionary("Master")["CardRare"] = cardRareDto;
             }
             request.Response["Roguelike"] = dto;
             request.Remove("Roguelike");
