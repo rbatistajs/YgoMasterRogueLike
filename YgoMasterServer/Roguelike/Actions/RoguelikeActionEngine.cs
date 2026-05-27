@@ -81,14 +81,32 @@ namespace YgoMaster
             if (mode == "keep" && picks.Count != size) return false;
             if (mode == "pick" && picks.Count != pickRequired) return false;
             if (cards != null)
+            {
+                Dictionary<string, object> settings = RoguelikeSettings.Load(dataDirectory);
+                bool autoAdd = RoguelikeSettings.DeckAutoAdd(settings);
+                int minCards = RoguelikeSettings.DeckMinCards(settings);
+                int maxMain  = RoguelikeSettings.DeckMaxMainCards(settings);
+                int maxExtra = RoguelikeSettings.DeckMaxExtraCards(settings);
                 foreach (int idx in picks)
                 {
                     Dictionary<string, object> c = cards[idx] as Dictionary<string, object>;
                     if (c == null) continue;
                     int cid = Utils.GetValue<int>(c, "cid");
                     run.AddCard(cid, 1);
-                    run.AddCidToDeck(dataDirectory, cid);
+                    // Reward routing — same rules for main and extra, just with their own caps.
+                    // Extra deck has no minimum (game allows 0 cards there), so it just respects
+                    // maxExtra + autoAddToDeck. Main respects min (forced slot), max (hard cap),
+                    // and autoAddToDeck (slot in between).
+                    bool isExtra = RoguelikeCardPool.IsCardExtraDeck(dataDirectory, cid);
+                    int curSize = isExtra ? run.GetExtraDeckSize() : run.GetMainDeckSize();
+                    int max  = isExtra ? maxExtra : maxMain;
+                    bool toDeck;
+                    if (curSize >= max) toDeck = false;                      // cap reached -> collection only
+                    else if (!isExtra && curSize < minCards) toDeck = true;  // below min -> mandatory
+                    else toDeck = autoAdd;                                   // between -> opt-in
+                    if (toDeck) run.AddCidToDeck(dataDirectory, cid);
                 }
+            }
             return true;
         }
 

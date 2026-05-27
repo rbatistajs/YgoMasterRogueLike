@@ -18,8 +18,14 @@ namespace YgoMaster
             Dictionary<string, object> dto = run.ToDictionary();
             dto["deckOffers"] = ExpandDeckOffers(run.DeckOffers);
             dto["maxAscension"] = RoguelikeMeta.Load(GetPlayerDirectory(request.Player)).MaxAscension;
-            dto["acts"] = RoguelikeSettings.Acts(RoguelikeSettings.Load(dataDirectory));
+            Dictionary<string, object> settings = RoguelikeSettings.Load(dataDirectory);
+            dto["acts"] = RoguelikeSettings.Acts(settings);
             dto["regulationId"] = RoguelikeCardPool.RegulationId(dataDirectory);
+            // Deck min/max — the client mirrors these in its save validation so the editor
+            // accepts whatever the mode allows (vanilla hardcodes 40/60/15 in DeckInfo.IsValid).
+            dto["deckMinCards"]      = RoguelikeSettings.DeckMinCards(settings);
+            dto["deckMaxMainCards"]  = RoguelikeSettings.DeckMaxMainCards(settings);
+            dto["deckMaxExtraCards"] = RoguelikeSettings.DeckMaxExtraCards(settings);
             // The full action tree (pendingAction) is server/disk-only; project a thin prompt for the wire.
             dto.Remove("pendingAction");
             Dictionary<string, object> actionPrompt = RoguelikeActionEngine.Project(run);

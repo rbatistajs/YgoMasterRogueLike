@@ -118,8 +118,8 @@ namespace YgoMasterClient
                 YgomGame.DeckEditViewController2.PopViewController();
                 return;
             }
-            int mainCount, min;
-            if (IsCurrentDeckValid(out mainCount, out min))
+            int mainCount, extraCount, min, maxMain, maxExtra;
+            if (IsCurrentDeckValid(out mainCount, out extraCount, out min, out maxMain, out maxExtra))
             {
                 YgomGame.Menu.CommonDialogViewController.OpenYesNoConfirmationDialog(
                     RoguelikeLabels.Get("deckedit.back.title", "Retornar ao mapa"),
@@ -132,9 +132,16 @@ namespace YgoMasterClient
             }
             else
             {
+                string msg;
+                if (extraCount > maxExtra)
+                    msg = RoguelikeLabels.Get("deckedit.invalid.back.extra",
+                        "O Deck Adicional pode ter no máximo {0} cards (atual: {1}). Não é possível salvar.", maxExtra, extraCount);
+                else
+                    msg = RoguelikeLabels.Get("deckedit.invalid.back.msg",
+                        "O Deck Principal deve ter entre {0} e {1} cards (atual: {2}). Não é possível salvar.", min, maxMain, mainCount);
                 YgomGame.Menu.CommonDialogViewController.OpenYesNoConfirmationDialog(
                     RoguelikeLabels.Get("deckedit.invalid.title", "Deck inválido"),
-                    RoguelikeLabels.Get("deckedit.invalid.back.msg", "O Deck Principal deve ter entre {0} e 60 cards (atual: {1}). Não é possível salvar.", min, mainCount),
+                    msg,
                     DiscardAndReturn, // Descartar alterações (sai da edição)
                     null,             // Editar (continua editando)
                     null,
@@ -149,12 +156,19 @@ namespace YgoMasterClient
         {
             try
             {
-                int mainCount, min;
-                if (!IsCurrentDeckValid(out mainCount, out min))
+                int mainCount, extraCount, min, maxMain, maxExtra;
+                if (!IsCurrentDeckValid(out mainCount, out extraCount, out min, out maxMain, out maxExtra))
                 {
+                    string msg;
+                    if (extraCount > maxExtra)
+                        msg = RoguelikeLabels.Get("deckedit.invalid.save.extra",
+                            "O Deck Adicional pode ter no máximo {0} cards (atual: {1}).", maxExtra, extraCount);
+                    else
+                        msg = RoguelikeLabels.Get("deckedit.invalid.save.msg",
+                            "O Deck Principal deve ter entre {0} e {1} cards (atual: {2}).", min, maxMain, mainCount);
                     YgomGame.Menu.CommonDialogViewController.OpenYesNoConfirmationDialog(
                         RoguelikeLabels.Get("deckedit.invalid.title", "Deck inválido"),
-                        RoguelikeLabels.Get("deckedit.invalid.save.msg", "O Deck Principal deve ter entre {0} e 60 cards (atual: {1}).", min, mainCount),
+                        msg,
                         ResetToSavedDeck, // Resetar
                         null,             // Cancelar
                         null,
@@ -165,23 +179,28 @@ namespace YgoMasterClient
                 DeckInfo deck = YgomGame.DeckEditViewController2.GetDeckInfo();
                 RoguelikeApi.SaveDeck(deck.ToDictionary());
                 _dirty = false;
-                Console.WriteLine("[Roguelike] deckedit save: " + mainCount + " main");
+                Console.WriteLine("[Roguelike] deckedit save: " + mainCount + " main, " + extraCount + " extra");
                 return true;
             }
             catch (Exception ex) { Console.WriteLine("[Roguelike] deckedit save EX: " + ex); return false; }
         }
 
-        // True when the editor's deck is a legal run deck. Outputs main-deck count and the minimum
-        // (40, or the run collection total if it owns fewer than 40 cards) for messaging.
-        static bool IsCurrentDeckValid(out int mainCount, out int min)
+        // True when the editor's deck is a legal run deck. min is the run's configured minimum
+        // (or the run-collection total if it owns fewer cards than the config asks for, so the
+        // early-game player can still save). max comes from the run config (defaults 60/15).
+        static bool IsCurrentDeckValid(out int mainCount, out int extraCount, out int min, out int maxMain, out int maxExtra)
         {
-            mainCount = 0;
+            mainCount = 0; extraCount = 0;
+            int cfgMin = RoguelikeApi.DeckMinCards();
+            maxMain = RoguelikeApi.DeckMaxMainCards();
+            maxExtra = RoguelikeApi.DeckMaxExtraCards();
             int collectionTotal = RoguelikeApi.RunOwnedCardTotal();
-            min = collectionTotal < 40 ? collectionTotal : 40;
+            min = collectionTotal < cfgMin ? collectionTotal : cfgMin;
             DeckInfo deck = YgomGame.DeckEditViewController2.GetDeckInfo();
             if (deck == null) return false;
             mainCount = deck.MainDeckCards.GetCollection().Count;
-            return mainCount >= min && mainCount <= 60;
+            extraCount = deck.ExtraDeckCards.GetCollection().Count;
+            return mainCount >= min && mainCount <= maxMain && extraCount <= maxExtra;
         }
 
         // Back-confirm callbacks (static = captureless, required by the dialog's UnityAction).

@@ -16,6 +16,7 @@ Changes affect **new runs** only (an in-progress run keeps the map/LP it was gen
 - [Map shape](#map-shape) — [`layout`](#layout) · [`floors`](#floors) · [`width`](#width) · [`paths`](#paths)
 - [Run structure (acts & ascension)](#run-structure-acts--ascension) — [`acts`](#acts) · [`ascensions`](#ascensions) · [`interActHealPercent`](#interacthealpercent)
 - [Combat & LP](#combat--lp) — [`playerMaxLp`](#playermaxlp) · [`healPercentPerCombat`](#healpercentpercombat) · [`enemyLp`](#enemylp)
+- [Deck constraints](#deck-constraints) — [`deck.minCards`](#deckmincards) · [`deck.maxMainCards`](#deckmaxmaincards) · [`deck.maxExtraCards`](#deckmaxextracards) · [`deck.autoAddToDeck`](#deckautoaddtodeck)
 - [CPU AI](#cpu-ai) — [`cpuRate`](#cpurate) · [`cpuFlag`](#cpuflag)
 - [Modifiers](#modifiers) — [`modifierDefaults`](#modifierdefaults)
 - [Node types & distribution](#node-types--distribution) — [`typeWeights`](#typeweights) · [`bands`](#bands) · [`typeRules`](#typerules) · [`forcedRows`](#forcedrows)
@@ -42,6 +43,10 @@ Changes affect **new runs** only (an in-progress run keeps the map/LP it was gen
 | [`enemyLp`](#enemylp) | object | `{default:2000}` | Enemy starting LP per node type. |
 | [`cpuRate`](#cpurate) | int | `100` | CPU AI strength (−100…100; 100 = max). |
 | [`cpuFlag`](#cpuflag) | string | `null` | CPU AI behavior flag (None/Fool/Light/…). |
+| [`deck.minCards`](#deckmincards) | int | `40` | Below this size, reward cards always slot into the main deck. |
+| [`deck.maxMainCards`](#deckmaxmaincards) | int | `60` | Hard cap on the main deck. Beyond this, rewards go only to the collection. |
+| [`deck.maxExtraCards`](#deckmaxextracards) | int | `15` | Hard cap on the extra deck. |
+| [`deck.autoAddToDeck`](#deckautoaddtodeck) | bool | `false` | When true, reward cards keep going into the deck even past `minCards` (still capped at the maxes). |
 | [`modifierDefaults`](#modifierdefaults) | object | `{}` | Per-type starting board + LP/hand deltas (merged under encounter modifiers). |
 | [`typeWeights`](#typeweights) | object | see below | Base random weights for node types. |
 | [`bands`](#bands) | array | `[]` | Per-row-zone weight tables. |
@@ -135,6 +140,59 @@ its own entry; if `enemyLp` is missing entirely the fallback is `2000`.
 ```json
 "enemyLp": { "default": 2000, "elite": 4000, "boss": 8000 }
 ```
+
+---
+
+## Deck constraints
+
+Where reward cards land — collection only, collection + deck, or both. All keys live under a
+single `deck` object; if `deck` (or any key inside) is missing, the defaults below apply.
+
+```json
+"deck": {
+    "minCards": 40,
+    "maxMainCards": 60,
+    "maxExtraCards": 15,
+    "autoAddToDeck": false
+}
+```
+
+Routing rules applied on every reward (openpack pick / future card-reward nodes). The card
+goes to the **run collection** unconditionally; whether it *also* lands in the deck is decided
+section by section (main vs. extra):
+
+1. Section already at its max (`maxMainCards` / `maxExtraCards`) → collection only.
+2. Main deck below `minCards` → always slot (keeps the deck legal to duel with). Extra has no
+   minimum.
+3. `autoAddToDeck: true` → also slot, up to the max.
+4. Otherwise → collection only.
+
+### `deck.minCards`
+
+*(int, default `40`)*
+Floor for the main deck. Below this size, every reward card is added to the main deck so the
+player can keep dueling. Cards beyond this size require `autoAddToDeck: true` to be auto-added;
+otherwise they land in the collection. Extra-deck cards ignore this number.
+
+### `deck.maxMainCards`
+
+*(int, default `60`)*
+Hard cap on the main deck size. Once reached, reward cards go only to the collection — even
+with `autoAddToDeck: true`. Set higher (or lower) if your mode lets the player run a
+non-standard deck size.
+
+### `deck.maxExtraCards`
+
+*(int, default `15`)*
+Hard cap on the extra deck. Same behavior as `maxMainCards` but for the Extra Deck section.
+
+### `deck.autoAddToDeck`
+
+*(bool, default `false`)*
+When `true`, reward cards continue to be added to the deck even after it reaches `minCards`
+(still capped at `maxMainCards` / `maxExtraCards`). Useful for modes where the player should
+never have to open the editor to make rewards usable. When `false` (default), rewards past
+`minCards` go to the run collection and the player decides what to slot in via the editor.
 
 ---
 
@@ -334,6 +392,8 @@ So **act overrides ascension overrides base**, and scaling is applied last on nu
   "playerMaxLp": 8000,
   "enemyLp": { "default": 2000, "elite": 4000, "boss": 8000 },
   "healPercentPerCombat": 0.10,
+
+  "deck": { "minCards": 40, "maxMainCards": 60, "maxExtraCards": 15, "autoAddToDeck": false },
 
   "bands": [
     { "from": 1, "to": 3,  "weights": { "duel": 0.7, "event": 0.2, "shop": 0.1 } },

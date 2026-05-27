@@ -115,6 +115,22 @@ namespace YgoMaster
             };
         }
 
+        // Number of cards currently in the run's main / extra deck. Used by reward-routing rules
+        // to decide whether a new card slots into the deck (below minCards / under maxMainCards)
+        // or just the collection.
+        public int GetMainDeckSize()  => GetDeckSectionSize("m");
+        public int GetExtraDeckSize() => GetDeckSectionSize("e");
+        int GetDeckSectionSize(string section)
+        {
+            if (Deck == null) return 0;
+            Dictionary<string, object> deckInner = Utils.GetValue<Dictionary<string, object>>(Deck, "deck");
+            if (deckInner == null) return 0;
+            Dictionary<string, object> sec = Utils.GetValue<Dictionary<string, object>>(deckInner, section);
+            if (sec == null) return 0;
+            List<object> ids = Utils.GetValue<List<object>>(sec, "ids");
+            return ids != null ? ids.Count : 0;
+        }
+
         // Place cid in the correct deck section of the run deck (Main or Extra). Creates the
         // minimal structure if missing. Used by openpack pick commit so picks land in the
         // active deck without needing a separate edit step.

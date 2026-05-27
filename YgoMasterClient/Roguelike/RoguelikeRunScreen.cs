@@ -222,6 +222,7 @@ namespace YgoMasterClient
                 DictAdd(args, "numMainCards", BoxInt(offer.Main.Count));
                 DictAdd(args, "numExtraCards", BoxInt(offer.Extra.Count));
                 DictAdd(args, "regulationMonochromeEnable", BoxBool(false));
+                DictAdd(args, "regulationId", BoxInt(RoguelikeApi.RegulationId()));
                 YgomSystem.UI.ViewControllerManager.PushChildViewControllerArgs(manager, "DeckBrowser", args);
             }
             catch (Exception ex) { Console.WriteLine("[Roguelike] ShowDeck EX: " + ex); }

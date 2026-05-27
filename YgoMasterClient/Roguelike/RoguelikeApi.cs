@@ -378,6 +378,12 @@ namespace YgoMasterClient
         public static List<int> RunDeckMain() { return RunDeckCards("m"); }
         public static List<int> RunDeckExtra() { return RunDeckCards("e"); }
 
+        // Deck limits used by reward routing + the run deck editor's save validation. Sourced
+        // from RoguelikeSettings.deck.* on the server; defaults (40/60/15) mirror vanilla.
+        public static int DeckMinCards()      { return YgomSystem.Utility.ClientWork.GetByJsonPath<int>("Roguelike.deckMinCards"); }
+        public static int DeckMaxMainCards()  { return YgomSystem.Utility.ClientWork.GetByJsonPath<int>("Roguelike.deckMaxMainCards"); }
+        public static int DeckMaxExtraCards() { return YgomSystem.Utility.ClientWork.GetByJsonPath<int>("Roguelike.deckMaxExtraCards"); }
+
         // Persist an edited run deck (DeckInfo.ToDictionary shape: {m:{ids,r}, e, s}) to the server.
         public static void SaveDeck(Dictionary<string, object> deck)
         {

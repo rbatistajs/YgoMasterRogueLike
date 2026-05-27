@@ -42,6 +42,37 @@ namespace YgoMaster
             return set;
         }
 
+        // ----- deck constraints (reward routing) -----
+        //
+        // deck.minCards     — below this, every new reward card slots into the deck so it stays
+        //                     legal to duel with. Default 40 = standard Yu-Gi-Oh main-deck floor.
+        // deck.maxMainCards — hard cap on the main deck. Reward cards beyond this size go only
+        //                     to the collection (even with autoAddToDeck). Default 60.
+        // deck.maxExtraCards — hard cap on the extra deck. Default 15.
+        // deck.autoAddToDeck — true: also add the card to the deck even past minCards (still
+        //                      capped at the maxes). false (default): rewards past minCards
+        //                      land only in the run collection so the player decides.
+        public static int DeckMinCards(Dictionary<string, object> s)
+        {
+            Dictionary<string, object> d = Utils.GetValue<Dictionary<string, object>>(s, "deck");
+            return d != null ? Utils.GetValue<int>(d, "minCards", 40) : 40;
+        }
+        public static int DeckMaxMainCards(Dictionary<string, object> s)
+        {
+            Dictionary<string, object> d = Utils.GetValue<Dictionary<string, object>>(s, "deck");
+            return d != null ? Utils.GetValue<int>(d, "maxMainCards", 60) : 60;
+        }
+        public static int DeckMaxExtraCards(Dictionary<string, object> s)
+        {
+            Dictionary<string, object> d = Utils.GetValue<Dictionary<string, object>>(s, "deck");
+            return d != null ? Utils.GetValue<int>(d, "maxExtraCards", 15) : 15;
+        }
+        public static bool DeckAutoAdd(Dictionary<string, object> s)
+        {
+            Dictionary<string, object> d = Utils.GetValue<Dictionary<string, object>>(s, "deck");
+            return d != null && Utils.GetValue<bool>(d, "autoAddToDeck", false);
+        }
+
         // ----- acts / ascension -----
 
         public static int Acts(Dictionary<string, object> s) => Math.Max(1, Utils.GetValue<int>(s, "acts", 3));
